@@ -1,0 +1,183 @@
+{
+  "version": 1,
+  "snapshot_utc": "2026-10-23T17:30:00Z",
+  "source": "GET https://openrouter.ai/api/v1/models",
+  "project_defaults": {
+    "test": {
+      "cap_usd": 3
+    }
+  },
+  "models": [
+    {
+      "requested": "GLM 5.3 flash",
+      "id": "z-ai/glm-5.3-flash",
+      "tier": "flash",
+      "context_length": 1048576,
+      "price_usd_per_token": {
+        "prompt": "0.00000015",
+        "completion": "0.0000005"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.15,
+        "completion": 0.5
+      },
+      "max_completion_tokens": 943717,
+      "role_hints": "cheap fast worker; bulk drafting, extraction"
+    },
+    {
+      "requested": "GLM 5.3",
+      "id": "z-ai/glm-5.3",
+      "tier": "pro",
+      "context_length": 1048576,
+      "price_usd_per_token": {
+        "prompt": "0.000000079",
+        "completion": "0.0000014"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.079,
+        "completion": 1.4
+      },
+      "max_completion_tokens": 943718,
+      "role_hints": "general reasoning/coding worker"
+    },
+    {
+      "requested": "MiMo v2.6 pro",
+      "id": "xiaomi/mimo-v2.6-pro",
+      "tier": "pro",
+      "context_length": 1050000,
+      "price_usd_per_token": {
+        "prompt": "0.000000435",
+        "completion": "0.00000087"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.435,
+        "completion": 0.87
+      },
+      "max_completion_tokens": 131072,
+      "role_hints": "reasoning/coding worker"
+    },
+    {
+      "requested": "MiMo v2.6 flash",
+      "id": "xiaomi/mimo-v2.6-flash",
+      "tier": "flash",
+      "context_length": 1050000,
+      "price_usd_per_token": {
+        "prompt": "0.00000014",
+        "completion": "0.00000028"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.14,
+        "completion": 0.28
+      },
+      "max_completion_tokens": 131072,
+      "role_hints": "cheap fast worker"
+    },
+    {
+      "requested": "Qwen 3.8 flash",
+      "id": "qwen/qwen3.8-flash",
+      "tier": "flash",
+      "context_length": 1000000,
+      "price_usd_per_token": {
+        "prompt": "0.00000015",
+        "completion": "0.00000047"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.15,
+        "completion": 0.47
+      },
+      "max_completion_tokens": 131072,
+      "role_hints": "cheap fast worker; long context"
+    },
+    {
+      "requested": "Qwen 3.8 max",
+      "id": "qwen/qwen3.8-max-0902",
+      "tier": "max",
+      "context_length": 1000000,
+      "price_usd_per_token": {
+        "prompt": "0.000002",
+        "completion": "0.000006"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 2.0,
+        "completion": 6.0
+      },
+      "max_completion_tokens": 131072,
+      "role_hints": "hard reasoning, judge/lead candidate; most expensive in roster",
+      "mapping_note": "No plain qwen3.8-max id; qwen/qwen3.8-max-0902 is the dated max snapshot (qwen3.8-max-prime is a 2x premium tier, not chosen)"
+    },
+    {
+      "requested": "DeepSeek v4.1 flash",
+      "id": "deepseek/deepseek-v4.1-flash",
+      "tier": "flash",
+      "context_length": 1048576,
+      "price_usd_per_token": {
+        "prompt": "0.0000003",
+        "completion": "0.0000012"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.3,
+        "completion": 1.2
+      },
+      "max_completion_tokens": 943718,
+      "role_hints": "cheap fast worker; 1M context",
+      "mapping_note": "deepseek/deepseek-v4.1-flash-1017 is a cheaper dated variant, listed as alt",
+      "alt_ids": [
+        "deepseek/deepseek-v4.1-flash-1017"
+      ]
+    },
+    {
+      "requested": "DeepSeek v4.1 pro",
+      "id": "deepseek/deepseek-v4-pro-0813",
+      "tier": "pro",
+      "context_length": 1048576,
+      "price_usd_per_token": {
+        "prompt": "0.00000066",
+        "completion": "0.00000198"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.66,
+        "completion": 1.98
+      },
+      "max_completion_tokens": 393216,
+      "role_hints": "reasoning/coding worker",
+      "mapping_note": "No deepseek v4.1 pro exists on OpenRouter (2026-10-24); closest current pro is deepseek/deepseek-v4-pro-0813"
+    },
+    {
+      "requested": "Ling latest",
+      "id": "inclusionai/ling-3.1-flash",
+      "tier": "flash",
+      "context_length": 262144,
+      "price_usd_per_token": {
+        "prompt": "0.000000075",
+        "completion": "0.000000225"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.075,
+        "completion": 0.225
+      },
+      "max_completion_tokens": 235929,
+      "role_hints": "ultra-cheap worker (INORI IR09 used Ling workers)",
+      "mapping_note": "Only flash-class Ling text models exist; ling-3.1-flash is the newest (ling-3.0-flash listed as alt)",
+      "alt_ids": [
+        "inclusionai/ling-3.0-flash"
+      ]
+    },
+    {
+      "requested": "MiniMax M3.1",
+      "id": "minimax/minimax-m3.1-flash",
+      "tier": "flash",
+      "context_length": 1048576,
+      "price_usd_per_token": {
+        "prompt": "0.00000015",
+        "completion": "0.0000006"
+      },
+      "price_usd_per_mtok": {
+        "prompt": 0.15,
+        "completion": 0.6
+      },
+      "max_completion_tokens": 524288,
+      "role_hints": "cheap long-context worker",
+      "mapping_note": "No plain minimax-m3.1; only minimax/minimax-m3.1-flash exists"
+    }
+  ]
+}

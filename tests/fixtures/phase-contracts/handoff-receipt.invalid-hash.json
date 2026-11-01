@@ -1,0 +1,18 @@
+{
+  "schema_version": "1",
+  "consumer": "P1",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p0",
+    "source_ref": "fixture:handoff-receipt"
+  },
+  "proof_mode": "synthetic",
+  "injection_receipt_id": "inj_wake_001",
+  "sealed_checkpoint_hash": "0123456789abcdef0123456789abcdef01234567",
+  "event_id": "evt_wake_001",
+  "message_id": "msg_wake_001",
+  "attempt_id": "attempt_wake_001",
+  "relay_receipt_stage_id": "stage_relay_001",
+  "native_host_run_stage_id": "stage_host_001",
+  "authenticated_exact_read_stage_id": "stage_read_001"
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "consumer": "P3",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p2",
+    "source_ref": "fixture:council-verdict"
+  },
+  "proof_mode": "synthetic",
+  "agenda_id": "agenda_p2_001",
+  "rounds": [
+    {
+      "name": "blind_r1",
+      "record_ref": "round_blind_001"
+    },
+    {
+      "name": "cross_r2",
+      "record_ref": "round_cross_001"
+    }
+  ],
+  "chair": {
+    "chair_id": "chair_muse",
+    "record_ref": "chair_record_001",
+    "summary": "Advisory verdict recorded with dissent."
+  },
+  "dissent": [
+    {
+      "member_id": "member_dots",
+      "text": "Egress proof is still missing."
+    }
+  ],
+  "unknowns": [
+    {
+      "topic": "MASS",
+      "note": "Content unknown from retrievable sources."
+    }
+  ],
+  "executes_immediately": true,
+  "owner_report_ref": "report_owner_001",
+  "owner_accepted": null,
+  "corrections": [],
+  "authority": []
+}

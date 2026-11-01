@@ -1,0 +1,135 @@
+{
+ "anchors": {
+  "decisions": {
+   "hash": "decisionshash-healthy",
+   "lastTs": "2026-10-31T15:10:00.000Z",
+   "rows": 1
+  },
+  "prs": {
+   "hash": "prshash-healthy",
+   "open": 3,
+   "total": 3
+  },
+  "refs": {
+   "count": 4,
+   "hash": "refshash-healthy",
+   "mainSha": "1111111111111111111111111111111111111111"
+  },
+  "room": {
+   "hash": "roomhash-healthy",
+   "lastMessageAt": "2026-11-01T01:29:00.000Z",
+   "lastMessageId": "msg-last-1",
+   "messageCount": 5740
+  }
+ },
+ "builtAt": "2026-10-31T20:00:00.000Z",
+ "decisions": [
+  {
+   "decision": "Example decision row",
+   "evidence": "msg-example",
+   "owner": "agent:dots",
+   "reason": "fixture",
+   "ts": "2026-10-31T15:10:00.000Z"
+  }
+ ],
+ "gates": [
+  {
+   "actor": "agent:dots",
+   "at": "2026-11-01T00:40:00.000Z",
+   "excerpt": "BLOCKED: gizmo repair waits on ledger reverify",
+   "kind": "BLOCKED",
+   "pr": 103,
+   "ref": "msg-blocked-1",
+   "source": "room"
+  },
+  {
+   "actor": null,
+   "at": "2026-10-31T15:05:00.000Z",
+   "excerpt": "HOLD: paid live calls stay closed",
+   "kind": "HOLD",
+   "pr": null,
+   "ref": "2026-10-31T15:05:00.000Z",
+   "source": "decisions"
+  }
+ ],
+ "prs": [
+  {
+   "author": "agent:grok",
+   "baseRefName": "main",
+   "headRefName": "feature-a",
+   "headRefOid": "aa10101010101010101010101010101010101010",
+   "isDraft": false,
+   "number": 101,
+   "state": "OPEN",
+   "title": "Add widget",
+   "updatedAt": "2026-11-01T00:50:00.000Z",
+   "url": "https://github.com/tamnagenius123-web/agent-workroom/pull/101"
+  },
+  {
+   "author": "agent:claude",
+   "baseRefName": "main",
+   "headRefName": "feature-b",
+   "headRefOid": "bb20202020202020202020202020202020202020",
+   "isDraft": false,
+   "number": 102,
+   "state": "OPEN",
+   "title": "Fix gadget",
+   "updatedAt": "2026-11-01T00:55:00.000Z",
+   "url": "https://github.com/tamnagenius123-web/agent-workroom/pull/102"
+  },
+  {
+   "author": "agent:muse",
+   "baseRefName": "main",
+   "headRefName": "feature-c",
+   "headRefOid": "cc30303030303030303030303030303030303030",
+   "isDraft": false,
+   "number": 103,
+   "state": "OPEN",
+   "title": "Repair gizmo",
+   "updatedAt": "2026-11-01T01:05:00.000Z",
+   "url": "https://github.com/tamnagenius123-web/agent-workroom/pull/103"
+  }
+ ],
+ "refs": [
+  {
+   "name": "refs/heads/main",
+   "sha": "1111111111111111111111111111111111111111"
+  },
+  {
+   "name": "refs/heads/feature-a",
+   "sha": "aa10101010101010101010101010101010101010"
+  },
+  {
+   "name": "refs/heads/feature-b",
+   "sha": "bb20202020202020202020202020202020202020"
+  },
+  {
+   "name": "refs/heads/feature-c",
+   "sha": "cc30303030303030303030303030303030303030"
+  }
+ ],
+ "room": "room_main",
+ "schema": "state-ledger/1",
+ "verdicts": [
+  {
+   "actor": "agent:dots",
+   "at": "2026-11-01T01:00:00.000Z",
+   "excerpt": "PASS feature-a at exact head, local CI green",
+   "localCi": true,
+   "messageId": "msg-pass-101",
+   "pr": 101,
+   "sha": "aa10101010101010101010101010101010101010",
+   "verdict": "PASS"
+  },
+  {
+   "actor": "agent:dots",
+   "at": "2026-11-01T00:20:00.000Z",
+   "excerpt": "FAIL: counterexample reproduces on head",
+   "localCi": false,
+   "messageId": "msg-fail-103",
+   "pr": 103,
+   "sha": "cc30303030303030303030303030303030303030",
+   "verdict": "FAIL"
+  }
+ ]
+}

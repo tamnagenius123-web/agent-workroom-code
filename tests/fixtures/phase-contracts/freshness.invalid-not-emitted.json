@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "consumer": "P4",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p5",
+    "source_ref": "fixture:freshness"
+  },
+  "proof_mode": "synthetic",
+  "check_id": "check_unemitted_001",
+  "action_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "context_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_status": "FRESH",
+  "intent_status": "VALID",
+  "intent_revision": "intent_001",
+  "permission_revision": "perm_001",
+  "manifest": [
+    {
+      "source_id": "src_room_main",
+      "representation": "src_room_main:message_body",
+      "revision": "rev_src_001",
+      "actually_emitted": false,
+      "freshness": "FRESH",
+      "coverage": "body"
+    }
+  ],
+  "checked_at": "2026-10-24T02:21:00.000Z",
+  "expires_at": "2026-10-24T03:21:00.000Z",
+  "evidence_refs": [
+    "evidence_src_room_main"
+  ],
+  "reasons": []
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "consumer": "P6",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p4",
+    "source_ref": "fixture:dispatch"
+  },
+  "proof_mode": "synthetic",
+  "run_id": "run_dispatch_001",
+  "attempt_id": "attempt_dispatch_001",
+  "hold_id": "hold_dispatch_001",
+  "call_id": "call_dispatch_001",
+  "hold": {
+    "run_id": "run_dispatch_001",
+    "attempt_id": "attempt_dispatch_001",
+    "hold_id": "hold_dispatch_001",
+    "call_id": "call_dispatch_001",
+    "amount_micros": 50000,
+    "category": "claude_api_credit",
+    "state": "released_with_evidence",
+    "evidence_ref": "ledger:release:001"
+  },
+  "unit_cost": {
+    "schema_version": "1",
+    "consumer": "P4",
+    "provenance": {
+      "kind": "synthetic_fixture",
+      "producer_id": "producer_p4",
+      "source_ref": "fixture:unit-cost"
+    },
+    "proof_mode": "synthetic",
+    "unit_id": "unit_dispatch_001",
+    "tool": "dispatch",
+    "model": "grok-4.7",
+    "tokens_in": 120,
+    "tokens_out": 30,
+    "usd_micros": 250000,
+    "subscription_usage": "UNKNOWN"
+  }
+}

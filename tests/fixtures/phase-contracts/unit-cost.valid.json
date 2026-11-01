@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "consumer": "P4",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p4",
+    "source_ref": "fixture:unit-cost"
+  },
+  "proof_mode": "synthetic",
+  "unit_id": "unit_dispatch_001",
+  "tool": "dispatch",
+  "model": "grok-4.7",
+  "tokens_in": 120,
+  "tokens_out": 30,
+  "usd_micros": 50000,
+  "subscription_usage": "UNKNOWN"
+}

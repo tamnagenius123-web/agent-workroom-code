@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "consumer": "P1",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p0",
+    "source_ref": "fixture:wake-proof"
+  },
+  "proof_mode": "live",
+  "event_id": "evt_wake_001",
+  "message_id": "msg_wake_001",
+  "attempt_id": "attempt_wake_001",
+  "relay_receipt": {
+    "stage_id": "stage_relay_001",
+    "evidence_source": "server_observed",
+    "evidence_ref": "relay:delivery:001",
+    "observed_at": "2026-10-24T02:21:00.000Z"
+  },
+  "native_host_run": {
+    "stage_id": "stage_host_001",
+    "evidence_source": "caller_claimed",
+    "evidence_ref": null,
+    "observed_at": null
+  },
+  "authenticated_exact_read": {
+    "stage_id": "stage_read_001",
+    "evidence_source": "caller_claimed",
+    "evidence_ref": null,
+    "observed_at": null
+  }
+}

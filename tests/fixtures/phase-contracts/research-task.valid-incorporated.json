@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "consumer": "P4",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p3",
+    "source_ref": "fixture:research-task"
+  },
+  "proof_mode": "synthetic",
+  "task_id": "research_002",
+  "applicability": "required",
+  "hypothesis": "A named consumer raises closure rate.",
+  "discriminator": "consumer present vs absent",
+  "edv_band": "mid",
+  "frontier_class": "dispatch",
+  "incorporated_by": "record_incorp_001"
+}

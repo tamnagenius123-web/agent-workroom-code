@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "consumer": "P6",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p6",
+    "source_ref": "fixture:skill-candidate"
+  },
+  "proof_mode": "synthetic",
+  "skill_id": "skill_fold_002",
+  "stage": "self_promoted",
+  "version": "1",
+  "rollback_to": null,
+  "proposer_id": "agent_proposer",
+  "promoter_id": null
+}

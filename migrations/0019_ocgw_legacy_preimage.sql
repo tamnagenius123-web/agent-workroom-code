@@ -1,0 +1,8 @@
+-- OCG-W rev2b (Codex 62032de8 P2 at 4ccd744). Each trigger is one line because the local harness splits on a semicolon followed by a newline.
+-- A v1 review digest hashes (title, body, valid_from) exactly as stored before rev2. Normalizing a legacy valid_from would orphan that digest, so the original
+-- text is kept once in legacy_valid_from (frozen, NULL for every row that was already canonical and for every new row) and skill grading hashes v1 with it.
+ALTER TABLE memory_items ADD COLUMN legacy_valid_from TEXT;
+DROP TRIGGER memory_items_frozen;
+UPDATE memory_items SET legacy_valid_from=valid_from, valid_from=strftime('%Y-%m-%dT%H:%M:%fZ', valid_from) WHERE strftime('%Y-%m-%dT%H:%M:%fZ', valid_from) IS NOT NULL AND valid_from IS NOT strftime('%Y-%m-%dT%H:%M:%fZ', valid_from);
+CREATE TRIGGER memory_items_frozen BEFORE UPDATE ON memory_items WHEN NEW.id IS NOT OLD.id OR NEW.room_id IS NOT OLD.room_id OR NEW.kind IS NOT OLD.kind OR NEW.tier IS NOT OLD.tier OR NEW.title IS NOT OLD.title OR NEW.body IS NOT OLD.body OR NEW.source_message_id IS NOT OLD.source_message_id OR NEW.source_version IS NOT OLD.source_version OR NEW.proposed_by IS NOT OLD.proposed_by OR NEW.valid_from IS NOT OLD.valid_from OR NEW.legacy_valid_from IS NOT OLD.legacy_valid_from OR NEW.created_at IS NOT OLD.created_at OR (OLD.valid_until IS NOT NULL AND NEW.valid_until IS NOT OLD.valid_until) BEGIN SELECT RAISE(ABORT,'memory item content is immutable; propose a new item and supersede'); END;
+CREATE TRIGGER memory_items_legacy_insert BEFORE INSERT ON memory_items WHEN NEW.legacy_valid_from IS NOT NULL BEGIN SELECT RAISE(ABORT,'legacy_valid_from is set only by migration 0019'); END;

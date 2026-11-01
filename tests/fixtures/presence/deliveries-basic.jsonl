@@ -1,0 +1,4 @@
+{"id":"dlv-1","message_id":"m1","delivered_at":"2026-10-31T23:59:35.000Z"}
+{"delivery_id":"dlv-2","message_id":"m2","delivered_at":"2026-10-31T20:00:05.000Z"}
+{"id":"dlv-1","message_id":"m1","delivered_at":"2026-10-31T23:59:35.000Z"}
+{"id":"dlv-3","agent_id":"agent:dots","message_id":"m3","delivered_at":"2026-10-31T23:00:04.000Z"}

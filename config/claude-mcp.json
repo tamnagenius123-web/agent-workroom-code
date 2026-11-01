@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "workroom": {
+      "type": "http",
+      "url": "${WORKROOM_MCP_URL:-https://example.workers.dev/mcp}",
+      "headers": { "Authorization": "Bearer ${WORKROOM_MCP_TOKEN}" }
+    }
+  }
+}

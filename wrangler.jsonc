@@ -1,0 +1,36 @@
+{
+  // PINNED production Worker (despite the -test name). dist/worker.mjs is prebuilt by `npm run build` (esbuild); never deploy dist/local-worker.mjs.
+  "name": "agent-workroom-main",
+  "main": "dist/worker.mjs",
+  "no_bundle": true,
+  "find_additional_modules": false,
+  "compatibility_date": "2026-07-28",
+  "workers_dev": true,
+  "preview_urls": false,
+  // Webhook retry: re-deliver due pending webhook_outbox rows.
+  "r2_buckets": [ { "binding": "FILES", "bucket_name": "your-files-bucket" } ],
+  // WR-GIT (WG-11): Artifacts namespace per wr-git-design §1. Needs Wrangler >= 4.145.0 (pinned in scripts/deploy-pinned.sh).
+  // Artifacts spend gate (design §7 / WG-0) do not merge or deploy this without the repo owner's direct approval.
+  "artifacts": [ { "binding": "ARTIFACTS", "namespace": "workroom" } ],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "your-d1-database-name", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  "vars": {
+    "WORKROOM_RESOURCE": "https://agent-workroom-main.tamnagenius123.workers.dev/mcp",
+    "WORKROOM_INGRESS_ID": "workers-dev",
+    // Serve standard 2025-06-18 / 2025-11-25 Streamable HTTP clients (e.g. ChatGPT) alongside 2026-07-28.
+    "MCP_COMPAT": "1",
+    // TEST Worker only: retention deletes instead of dry-run.
+    "RETENTION_MODE": "dry_run",
+    // File sharing path B (TEST only): hard 1-hour TTL and caps. Upper bounds are enforced in code.
+    "FILE_MAX_BYTES": "26214400",
+    "FILE_TTL_SECONDS": "3600",
+    "FILE_HOUR_BYTES": "104857600",
+    "FILE_ROOM_MAX_BYTES": "524288000",
+    // WR-GIT routes are 404 unless this is "1"; they 503 if ARTIFACTS is missing.
+    // Off until the artifacts repo exists in the namespace; on without it, every claim 503s.
+    "WRGIT_ENABLED": "0"
+  }
+  // PINNED PRODUCTION: this worker is production. There is no env.production. Never pass --env. Deploy only via scripts/deploy-pinned.sh.
+}

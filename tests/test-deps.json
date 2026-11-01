@@ -1,0 +1,34 @@
+{
+  "_doc": "Non-import links for scripts/test-select.mjs. Imports and string-literal repo paths are discovered automatically; only list what static analysis cannot see.",
+  "dist": {
+    "dist/worker.mjs": "src/server/worker.ts",
+    "dist/local-worker.mjs": "src/server/local.ts",
+    "dist/workroom.mjs": "src/cli/main.ts",
+    "dist/workroom-connection-plan.mjs": "src/cli/connection-plan.ts"
+  },
+  "everything": [
+    "tsconfig.json"
+  ],
+  "ignore": [
+    "docs/",
+    "README.md",
+    "CHANGELOG.md",
+    "reports/",
+    "eslint.config.mjs",
+    "wrangler.jsonc",
+    ".github/",
+    "scripts/browser-",
+    "scripts/dev.ts",
+    "scripts/test-select.mjs",
+    "tests/test-exclusive.json",
+    "tests/test-deps.json"
+  ],
+  "smoke": [
+    "tests/contracts.test.ts",
+    "tests/g5-scopes.test.ts",
+    "tests/wake-proof.test.ts",
+    "tests/migration-order.test.ts",
+    "tests/files-http.test.ts",
+    "tests/fold-mcp.test.ts"
+  ]
+}

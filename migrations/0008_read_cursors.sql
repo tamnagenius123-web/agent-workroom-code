@@ -1,0 +1,1 @@
+CREATE TABLE read_cursors (principal_id TEXT NOT NULL REFERENCES principals(id), room_id TEXT NOT NULL REFERENCES rooms(id), last_seq INTEGER NOT NULL CHECK(last_seq>=0), updated_at INTEGER NOT NULL, PRIMARY KEY(principal_id, room_id));

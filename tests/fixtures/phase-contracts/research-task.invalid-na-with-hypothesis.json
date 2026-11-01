@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "consumer": "P4",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p3",
+    "source_ref": "fixture:research-task"
+  },
+  "proof_mode": "synthetic",
+  "task_id": "task_det_001",
+  "applicability": "not_applicable",
+  "reason": "Deterministic ledger write; research is not a prerequisite.",
+  "incorporated_by": null,
+  "hypothesis": "should not be here"
+}

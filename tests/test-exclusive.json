@@ -1,0 +1,4 @@
+{
+  "_doc": "Test files that must not overlap with others holding the same lock key. Each entry needs a reason. Default: every file runs in parallel. Verified 2026-10-24: all 33 files pass at 8-way concurrency (harness uses port 0 and in-memory D1 per Miniflare instance; persisted tests use mkdtemp).",
+  "files": {}
+}

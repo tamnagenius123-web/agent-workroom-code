@@ -1,0 +1,7 @@
+{"id":"dlv-x1","message_id":"mx","delivered_at":"2026-10-31T22:00:00.000Z"}
+this is not json
+{"foo":1}
+{"id":"dlv-x2","principal":"agent:dots","message_id":"m3","ts":"2026-10-31T22:30:00.000Z"}
+{"message_id":"mx9","delivered_at":"2026-10-31T21:00:00.000Z"}
+{"message_id":"mx9","delivered_at":"2026-10-31T21:00:00.000Z"}
+

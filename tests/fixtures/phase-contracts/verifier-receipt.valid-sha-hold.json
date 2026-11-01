@@ -1,0 +1,64 @@
+{
+  "schema_version": "1",
+  "consumer": "P2",
+  "provenance": {
+    "kind": "synthetic_fixture",
+    "producer_id": "producer_p1",
+    "source_ref": "fixture:verifier-receipt"
+  },
+  "proof_mode": "synthetic",
+  "sha": "0123456789abcdef0123456789abcdef01234567",
+  "observed_sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "gate_version": "p1.0",
+  "cases": [
+    {
+      "case_id": "RC1",
+      "state": "passed",
+      "evidence": "case RC1 log retained"
+    },
+    {
+      "case_id": "RC2",
+      "state": "passed",
+      "evidence": "case RC2 log retained"
+    }
+  ],
+  "author_lineage": {
+    "method": "author.impl",
+    "dependencies": [
+      "pkg-a",
+      "pkg-b"
+    ]
+  },
+  "verifier_lineage": {
+    "method": "verifier.impl",
+    "dependencies": [
+      "pkg-a",
+      "pkg-b"
+    ]
+  },
+  "producer_id": "agent_author",
+  "acceptor_id": "agent_acceptor",
+  "verdict": "HOLD",
+  "failure_packet": {
+    "failed_cases": [
+      "RC1",
+      "RC2"
+    ],
+    "evidence": [
+      "checkout sha changed"
+    ],
+    "next_maker": "agent_author"
+  },
+  "f2": {
+    "id": "F2",
+    "description": "TBD"
+  },
+  "f3": {
+    "id": "F3",
+    "description": "TBD"
+  },
+  "f6": {
+    "id": "F6",
+    "description": "TBD"
+  }
+}

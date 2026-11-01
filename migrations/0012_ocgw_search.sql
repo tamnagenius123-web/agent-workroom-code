@@ -1,0 +1,5 @@
+-- OCG-W W1: full-text retrieval over room messages (latest revision). See docs/specs/ocg-integration.md.
+CREATE VIRTUAL TABLE memory_fts USING fts5(text, message_id UNINDEXED, room_id UNINDEXED, actor_id UNINDEXED, created_at UNINDEXED, tokenize='unicode61 remove_diacritics 2');
+CREATE TRIGGER memory_fts_msg AFTER INSERT ON messages BEGIN INSERT INTO memory_fts(text,message_id,room_id,actor_id,created_at) VALUES (NEW.text,NEW.id,NEW.room_id,NEW.actor_id,NEW.created_at); END;
+CREATE TRIGGER memory_fts_rev AFTER INSERT ON message_revisions BEGIN DELETE FROM memory_fts WHERE message_id=NEW.message_id; INSERT INTO memory_fts(text,message_id,room_id,actor_id,created_at) SELECT NEW.text,m.id,m.room_id,m.actor_id,m.created_at FROM messages m WHERE m.id=NEW.message_id; END;
+INSERT INTO memory_fts(text,message_id,room_id,actor_id,created_at) SELECT COALESCE((SELECT r.text FROM message_revisions r WHERE r.message_id=m.id ORDER BY r.version DESC LIMIT 1), m.text), m.id, m.room_id, m.actor_id, m.created_at FROM messages m;
