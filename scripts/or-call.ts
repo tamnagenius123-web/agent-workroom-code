@@ -134,3 +134,5 @@ if (isDirectRun()) {
     process.exitCode = 1;
   });
 }
+
+// CI measurement probe (D5-cl affected-set run, 2026-11-01): comment-only change.
