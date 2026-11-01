@@ -1,15 +1,24 @@
 name: ci
 on:
   pull_request:
+    # Tip 3 (D5-cv): docs-only changes do not trigger ci. ci.yml only —
+    # policy.yml intentionally carries no paths filter (policy must always run).
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   # Council C-H1: a main (integration) run is never cancelled by the next push;
-  # superseded PR runs may be.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # superseded PR runs may be. Tip 2 (D5-cv): cancel superseded in-progress
+  # runs on every ref except main itself.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
   TEST_CONCURRENCY: '4'
   TEST_FILE_TIMEOUT_MS: '300000'
