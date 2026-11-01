@@ -78,9 +78,15 @@ jobs:
       - name: tsbuildinfo cache
         uses: actions/cache@v4
         with:
-          path: .cache/tsbuildinfo
-          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
-          restore-keys: tsbuildinfo-${{ runner.os }}-
+          # The declaration outputs (.cache/tsc) must be cached together with
+          # the buildinfo: buildinfo alone makes tsc -b trust outputs that are
+          # not on disk and every referencing project fails TS6305 (proven on
+          # run 41306059492; key bumped to start from a consistent cache).
+          path: |
+            .cache/tsbuildinfo
+            .cache/tsc
+          key: tsbuildinfo2-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
+          restore-keys: tsbuildinfo2-${{ runner.os }}-
       # Scoped build-mode typecheck (D5-cl (2)); the tsbuildinfo cache above is
       # what makes tsc -b cheaper than a full tsc --noEmit on repeat runs.
       - run: npx tsc -b
@@ -130,9 +136,15 @@ jobs:
       - name: tsbuildinfo cache
         uses: actions/cache@v4
         with:
-          path: .cache/tsbuildinfo
-          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
-          restore-keys: tsbuildinfo-${{ runner.os }}-
+          # The declaration outputs (.cache/tsc) must be cached together with
+          # the buildinfo: buildinfo alone makes tsc -b trust outputs that are
+          # not on disk and every referencing project fails TS6305 (proven on
+          # run 41306059492; key bumped to start from a consistent cache).
+          path: |
+            .cache/tsbuildinfo
+            .cache/tsc
+          key: tsbuildinfo2-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
+          restore-keys: tsbuildinfo2-${{ runner.os }}-
       - run: npx tsc -b
       - name: eslint cache
         uses: actions/cache@v4
