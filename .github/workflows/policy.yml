@@ -1,0 +1,71 @@
+name: policy
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Head sha, not the merge commit. pull_request_target otherwise checks out the base branch.
+      # fetch-depth 0 pulls every branch (so the base sha is present) and the action then fetches
+      # this sha. The next step fetches refs/pull/<number>/head, which is the ref fork commits
+      # are reachable from. Nothing in this job runs a file from pr/.
+      - name: checkout pull request for the diff
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: pr
+      - name: fetch pull head for fork PRs
+        working-directory: pr
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          head_sha="${HEAD_SHA}"
+          base_sha="${BASE_SHA}"
+          # The checkout step authenticated its fetch, then dropped the token.
+          # Retry the advertised pull ref so a fork head is local. If that fetch
+          # cannot authenticate, keep going only when both commits are already local.
+          if ! git fetch --no-tags origin \
+            "+refs/pull/${PR_NUMBER}/head:refs/pull/${PR_NUMBER}/head" \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          then
+            git cat-file -e "${head_sha}^{commit}"
+            git cat-file -e "${base_sha}^{commit}"
+          fi
+          git checkout --detach "${head_sha}"
+          test "$(git rev-parse HEAD)" = "${head_sha}"
+          git cat-file -e "${base_sha}^{commit}"
+      - name: checkout base ref gate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: gate
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: tier, decisions.tsv, blast radius
+        working-directory: pr
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node "$GITHUB_WORKSPACE/gate/scripts/ci/check.mjs" "$BASE_SHA" "$HEAD_SHA"

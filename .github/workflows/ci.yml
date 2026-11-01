@@ -1,0 +1,47 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      TEST_CONCURRENCY: '4'
+      TEST_FILE_TIMEOUT_MS: '300000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      # Base branch tip vs this checkout. Same helper the policy job runs from check.mjs.
+      - name: stale merge-gate wording lint (docs/OWNER_RULINGS.md)
+        run: node scripts/ci/stale-phrases.mjs
+      - name: migration number lint
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_BASE_REF:-main}"
+          git fetch --no-tags --depth=1 origin "+refs/heads/${ref}:refs/remotes/origin/${ref}"
+          node scripts/ci/mig-num-lint.mjs "refs/remotes/origin/${ref}" HEAD
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      # Every tests/*.test.ts, one node:test child per file (tsx --test), via scripts/test-run.mjs.
+      # Per-file timeout guards hangs; the job timeout is the backstop.
+      - run: npm run test:all
+        timeout-minutes: 15
+        env:
+          # claude-runner defaults to /workspace paths on the box; point it at scratch dirs so the test is hermetic.
+          CLAUDE_AGENT_DIR: ${{ runner.temp }}/claude-agent
+          WORKROOM_GW: ${{ runner.temp }}/grok-workroom
+          CLAUDE_WT: ${{ runner.temp }}/claude-wt
