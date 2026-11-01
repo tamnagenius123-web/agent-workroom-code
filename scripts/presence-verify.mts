@@ -78,6 +78,7 @@ const evidence = {
 };
 const text = JSON.stringify(evidence, null, 2);
 const outIdx = process.argv.indexOf('--out');
-if (outIdx >= 0 && process.argv[outIdx + 1]) writeFileSync(process.argv[outIdx + 1], text + '\n');
+const outPath = outIdx >= 0 ? process.argv[outIdx + 1] : undefined;
+if (outPath) writeFileSync(outPath, text + '\n');
 console.log(text);
 process.exit(evidence.ok ? 0 : 1);

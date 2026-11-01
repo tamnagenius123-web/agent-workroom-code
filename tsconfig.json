@@ -1,10 +1,8 @@
 {
-  "compilerOptions": {
-    "target": "ES2023", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "lib": ["ES2024", "DOM", "DOM.Iterable"], "strict": true,
-    "noUncheckedIndexedAccess": true, "noUnusedLocals": true,
-    "noUnusedParameters": true, "skipLibCheck": true, "allowImportingTsExtensions": true,
-    "types": ["node"], "noEmit": true, "resolveJsonModule": true
-  },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.src.json" },
+    { "path": "./tsconfig.scripts.json" },
+    { "path": "./tsconfig.tests.json" }
+  ]
 }

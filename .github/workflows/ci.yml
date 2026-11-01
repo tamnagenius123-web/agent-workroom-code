@@ -7,16 +7,25 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Council C-H1: a main (integration) run is never cancelled by the next push;
+  # superseded PR runs may be.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  TEST_CONCURRENCY: '4'
+  TEST_FILE_TIMEOUT_MS: '300000'
 jobs:
-  ci:
+  # PR: affected tests only (D5-cl (1)). The job always runs; a docs-only
+  # change skips the test step by condition instead of skipping the job, so a
+  # required check never sits pending.
+  pr:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      TEST_CONCURRENCY: '4'
-      TEST_FILE_TIMEOUT_MS: '300000'
     steps:
+      # Full history: test-select diffs against the merge-base of the base branch.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
@@ -33,15 +42,173 @@ jobs:
           git fetch --no-tags --depth=1 origin "+refs/heads/${ref}:refs/remotes/origin/${ref}"
           node scripts/ci/mig-num-lint.mjs "refs/remotes/origin/${ref}" HEAD
       - run: npm ci
+      - name: select affected tests
+        id: select
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base="origin/${BASE_REF}"
+          mb="$(git merge-base "$base" HEAD)"
+          git diff --name-only "$mb" HEAD > changed.txt
+          node scripts/test-select.mjs --base "$base" --list > selected.txt 2> select.log
+          cat select.log
+          docs_only=true
+          while IFS= read -r f; do
+            case "$f" in
+              docs/*|reports/*|*.md) ;;
+              *) docs_only=false ;;
+            esac
+          done < changed.txt
+          {
+            echo "## test selection (D5-cl: affected set is the default)"
+            echo "- changed files: $(wc -l < changed.txt)"
+            echo "- selected test files: $(wc -l < selected.txt) of $(ls tests/*.test.ts | wc -l)"
+            echo "- wide expansion (shared surface): $(grep -c 'WIDE' select.log || true) trigger(s)"
+            echo "- docs-only: ${docs_only}"
+            echo ""
+            echo "### changed"
+            sed 's/^/- /' changed.txt
+            echo ""
+            echo "### selection log"
+            sed 's/^/- /' select.log
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
       - run: npm run build
-      - run: npx tsc --noEmit
+      - name: tsbuildinfo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
+          restore-keys: tsbuildinfo-${{ runner.os }}-
+      # Scoped build-mode typecheck (D5-cl (2)); the tsbuildinfo cache above is
+      # what makes tsc -b cheaper than a full tsc --noEmit on repeat runs.
+      - run: npx tsc -b
+      - name: eslint cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('eslint.config.mjs', 'package-lock.json') }}
+          restore-keys: eslint-${{ runner.os }}-
       - run: npm run lint
-      # Every tests/*.test.ts, one node:test child per file (tsx --test), via scripts/test-run.mjs.
-      # Per-file timeout guards hangs; the job timeout is the backstop.
-      - run: npm run test:all
+      - name: run affected tests
+        if: steps.select.outputs.docs_only != 'true'
         timeout-minutes: 15
         env:
           # claude-runner defaults to /workspace paths on the box; point it at scratch dirs so the test is hermetic.
           CLAUDE_AGENT_DIR: ${{ runner.temp }}/claude-agent
           WORKROOM_GW: ${{ runner.temp }}/grok-workroom
           CLAUDE_WT: ${{ runner.temp }}/claude-wt
+        run: node scripts/test-select.mjs --base origin/${{ github.base_ref }}
+      - name: docs-only change
+        if: steps.select.outputs.docs_only == 'true'
+        run: echo "docs-only change - test execution skipped by step condition; lints, build, typecheck and lint above still ran. Selection evidence is in the job summary."
+  # Push to main is the integration point: static gates once, then the full
+  # suite sharded across parallel jobs (D5-cl (3)).
+  gate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - name: stale merge-gate wording lint (docs/OWNER_RULINGS.md)
+        run: node scripts/ci/stale-phrases.mjs
+      - name: migration number lint
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          ref="main"
+          git fetch --no-tags --depth=1 origin "+refs/heads/${ref}:refs/remotes/origin/${ref}"
+          node scripts/ci/mig-num-lint.mjs "refs/remotes/origin/${ref}" HEAD
+      - run: npm ci
+      - run: npm run build
+      - name: tsbuildinfo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/tsbuildinfo
+          key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
+          restore-keys: tsbuildinfo-${{ runner.os }}-
+      - run: npx tsc -b
+      - name: eslint cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('eslint.config.mjs', 'package-lock.json') }}
+          restore-keys: eslint-${{ runner.os }}-
+      - run: npm run lint
+  plan:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: restore test timings
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/test-timings.json
+          key: test-timings-${{ github.run_id }}
+          restore-keys: test-timings-
+      - name: plan shards
+        id: plan
+        run: node scripts/ci/plan-shards.mjs
+  test-shard:
+    if: github.event_name == 'push'
+    needs: [gate, plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: run shard ${{ matrix.shard }}
+        timeout-minutes: 20
+        env:
+          CLAUDE_AGENT_DIR: ${{ runner.temp }}/claude-agent
+          WORKROOM_GW: ${{ runner.temp }}/grok-workroom
+          CLAUDE_WT: ${{ runner.temp }}/claude-wt
+        run: node scripts/ci/run-files.mjs --files "${{ matrix.files }}"
+      - name: upload shard timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-timings-${{ matrix.shard }}
+          path: .cache/test-timings.json
+          if-no-files-found: ignore
+  timings:
+    if: always() && github.event_name == 'push'
+    needs: [test-shard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test-timings-*
+          path: shard-timings
+      - name: merge shard timings
+        run: node scripts/ci/merge-timings.mjs shard-timings .cache/test-timings.json
+      - name: save test timings
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/test-timings.json
+          key: test-timings-${{ github.run_id }}

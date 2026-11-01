@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "scripts", "outDir": ".cache/tsc/scripts",
+    "tsBuildInfoFile": ".cache/tsbuildinfo/scripts.tsbuildinfo"
+  },
+  "include": ["scripts/**/*.ts", "scripts/**/*.mts"],
+  "references": [{ "path": "./tsconfig.src.json" }]
+}

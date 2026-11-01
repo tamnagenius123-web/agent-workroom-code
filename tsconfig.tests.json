@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "tests", "outDir": ".cache/tsc/tests",
+    "tsBuildInfoFile": ".cache/tsbuildinfo/tests.tsbuildinfo"
+  },
+  "include": ["tests/**/*.ts"],
+  "references": [{ "path": "./tsconfig.src.json" }, { "path": "./tsconfig.scripts.json" }]
+}

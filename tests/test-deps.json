@@ -9,6 +9,20 @@
   "everything": [
     "tsconfig.json"
   ],
+  "wide": [
+    "scripts/local-harness.ts",
+    "scripts/test-run.mjs",
+    "scripts/test-select.mjs",
+    "migrations/",
+    "contracts/",
+    "package.json",
+    "package-lock.json",
+    ".github/workflows/",
+    "tsconfig.base.json",
+    "tsconfig.src.json",
+    "tsconfig.tests.json",
+    "tsconfig.scripts.json"
+  ],
   "ignore": [
     "docs/",
     "README.md",

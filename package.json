@@ -10,8 +10,8 @@
     "workroom": "dist/workroom.mjs"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint src tests scripts",
+    "typecheck": "tsc -b",
+    "lint": "eslint src tests scripts --cache --cache-location .cache/eslintcache",
     "build": "node scripts/build.mjs",
     "test": "node scripts/test-select.mjs",
     "test:browser": "tsx scripts/browser-test.ts && tsx scripts/browser-g2-test.ts && tsx scripts/browser-g3-test.ts",
