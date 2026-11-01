@@ -12,7 +12,9 @@ const out = process.argv[3] || '.cache/test-timings.json';
 if (!root) { console.error('[merge-timings] usage: merge-timings.mjs <dir> [out]'); process.exit(2); }
 
 const byFile = new Map();
-for (const sub of readdirSync(root)) {
+const subs = existsSync(root) ? readdirSync(root) : [];
+if (!subs.length) console.error(`[merge-timings] no shard artifacts under ${root} (test shards did not run?)`);
+for (const sub of subs) {
   const p = join(root, sub, 'test-timings.json');
   if (!existsSync(p)) continue;
   let map;
@@ -28,6 +30,10 @@ for (const [f, vals] of byFile) {
   vals.sort((a, b) => a - b);
   merged[f] = vals[Math.floor(vals.length / 2)];
 }
-mkdirSync(dirname(out), { recursive: true });
-writeFileSync(out, JSON.stringify(merged, null, 1));
+if (!Object.keys(merged).length) {
+  console.error('[merge-timings] nothing to merge; leaving any existing timings file untouched');
+} else {
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, JSON.stringify(merged, null, 1));
+}
 console.error(`[merge-timings] ${Object.keys(merged).length} file(s) -> ${out}`);

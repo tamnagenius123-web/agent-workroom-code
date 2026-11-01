@@ -208,6 +208,7 @@ jobs:
       - name: merge shard timings
         run: node scripts/ci/merge-timings.mjs shard-timings .cache/test-timings.json
       - name: save test timings
+        if: hashFiles('.cache/test-timings.json') != ''
         uses: actions/cache/save@v4
         with:
           path: .cache/test-timings.json
