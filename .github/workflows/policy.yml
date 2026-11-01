@@ -17,10 +17,12 @@ jobs:
       pull-requests: read
     steps:
       # Head sha, not the merge commit. pull_request_target otherwise checks out the base branch.
-      # Depth 1 is enough: the checker reads the PR body (env), diffs base..head
-      # and detects shallow history itself. The next step fetches the base commit
-      # and the advertised pull ref (fork heads) directly, so no full clone is
-      # needed. Nothing in this job runs a file from pr/.
+      # The checker reads the PR body (env) and diffs base...head (three-dot),
+      # which needs the merge-base commit reachable: the next step fetches
+      # depth 1 first, then deepens until git can compute the merge-base
+      # (verified locally: with the merge-base reachable, the verdict is
+      # byte-identical to a full clone; without it the diff fails closed).
+      # Nothing in this job runs a file from pr/.
       - name: checkout pull request for the diff
         uses: actions/checkout@v4
         with:
@@ -53,6 +55,20 @@ jobs:
             git cat-file -e "${base_sha}^{commit}"
           fi
           git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+          # Three-dot diff needs the merge-base reachable from both commits.
+          # Deepen progressively; a long-diverged branch falls back to a full
+          # fetch. If the merge-base still cannot be computed, fail here
+          # rather than let the checker run on a degraded history.
+          if ! git merge-base "${base_sha}" "${head_sha}" >/dev/null 2>&1; then
+            for extra in 100 500; do
+              git fetch --no-tags --deepen=${extra} origin "${head_sha}" "${base_sha}" || true
+              git merge-base "${base_sha}" "${head_sha}" >/dev/null 2>&1 && break
+            done
+          fi
+          if ! git merge-base "${base_sha}" "${head_sha}" >/dev/null 2>&1; then
+            git fetch --no-tags --unshallow origin || git fetch --no-tags origin
+          fi
+          git merge-base "${base_sha}" "${head_sha}" >/dev/null
           git checkout --detach "${head_sha}"
           test "$(git rev-parse HEAD)" = "${head_sha}"
           git cat-file -e "${base_sha}^{commit}"
