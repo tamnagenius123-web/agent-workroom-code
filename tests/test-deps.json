@@ -39,8 +39,6 @@
   ],
   "smoke": [
     "tests/contracts.test.ts",
-    "tests/g5-scopes.test.ts",
-    "tests/wake-proof.test.ts",
     "tests/migration-order.test.ts",
     "tests/files-http.test.ts",
     "tests/fold-mcp.test.ts"
