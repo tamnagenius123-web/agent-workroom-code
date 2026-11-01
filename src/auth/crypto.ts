@@ -1,27 +1,20 @@
-// BOUNDARY CONTRACT — mirrors src/auth/crypto.ts in the gate MCP repo (agent-workroom-gate-mcp).
-// Types and contract constants are declared here; runtime entry points fail closed.
-// Phase 2 replaces this seam with gate-MCP calls; do not implement auth behavior here.
-
-import { boundaryUnavailable } from '../boundary.ts';
-
-export function b64url(_bytes: Uint8Array): string {
-  return boundaryUnavailable('src/auth/crypto.ts', 'b64url', _bytes);
+const enc = new TextEncoder();
+export function b64url(bytes: Uint8Array): string {
+  let s = ''; for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-
-export function fromB64url(_s: string): Uint8Array<ArrayBuffer> {
-  return boundaryUnavailable('src/auth/crypto.ts', 'fromB64url', _s);
+export function fromB64url(s: string): Uint8Array<ArrayBuffer> {
+  const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
 }
-
-export const random = (_n = 32): string => boundaryUnavailable('src/auth/crypto.ts', 'random', _n);
-
-export async function sha256(_s: string): Promise<string> {
-  return boundaryUnavailable('src/auth/crypto.ts', 'sha256', _s);
+export const random = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
+export async function sha256(s: string): Promise<string> { return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(s)))); }
+export async function hmac(key: string, s: string): Promise<string> {
+  const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return b64url(new Uint8Array(await crypto.subtle.sign('HMAC', k, enc.encode(s))));
 }
-
-export async function hmac(_key: string, _s: string): Promise<string> {
-  return boundaryUnavailable('src/auth/crypto.ts', 'hmac', _key, _s);
-}
-
-export function same(_a: string, _b: string): boolean {
-  return boundaryUnavailable('src/auth/crypto.ts', 'same', _a, _b);
+export function same(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
 }
