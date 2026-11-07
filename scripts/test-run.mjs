@@ -51,7 +51,8 @@ export async function runTests(list, { needsBuild = () => false } = {}) {
         // Repeated explicit paths still run; a later success must not erase a failed attempt.
         results.set(f, { code: previous && previous.code !== 0 ? previous.code : code, ms });
         if (signal) out += `\n[test-run] runner killed by ${signal}\n`; past[f] = ms;
-        const tests = /# tests (\d+)/.exec(out)?.[1] ?? '?';
+        // Use the final top-level TAP count line, not a summary quoted inside a diagnostic.
+        const tests = [...out.matchAll(/^# tests (\d+)\r?$/gm)].at(-1)?.[1] ?? '?';
         console.error(`${code !== 0 ? 'FAIL' : 'ok  '} ${f}  ${tests} tests  ${(ms / 1000).toFixed(1)}s`);
         if (code !== 0) process.stderr.write(out);
         running--; locksOf(f).forEach((k) => held.delete(k)); pump();
