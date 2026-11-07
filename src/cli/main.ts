@@ -142,7 +142,8 @@ async function main(): Promise<Envelope> {
     const result: unknown = await response.json();
     return decodeResponse(result, command, response.ok,
       mutation || command === 'operation get' ? String(flags['--idempotency-key']) : undefined,
-      command==='operation get'?String(flags['--operation']):undefined);
+      command==='operation get'?String(flags['--operation']):undefined,
+      command.startsWith('task ')&&command!=='task create'?String(flags['--task']):undefined);
   } catch {
     throw new Fault('TEMPORARY_FAILURE', mutation ? 'Outcome unknown. Requery or retry identical content with the same key.' : 'Read did not complete.',
       503, mutation ? 'unknown' : 'not_applied', true);
