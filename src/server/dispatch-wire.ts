@@ -2,6 +2,7 @@
 // Reserve and settle each run as one D1 batch. The OpenRouter fetch sits between them,
 // so the two money movements cannot share a batch. Identity comes from the transport.
 import { z } from 'zod';
+import { BoundaryUnavailableError } from '../boundary.ts';
 import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };
 import {
   dispatch, estimateMicroUsd,
@@ -456,6 +457,9 @@ async function agentDispatch(service: Workroom, env: DispatchEnv, input: Dispatc
   try {
     estimateMicroUsd(input.model, input.prompt.length, maxTokens, roster);
   } catch (error) {
+    if (error instanceof BoundaryUnavailableError) {
+      throw new Fault('NOT_AVAILABLE', 'Dispatch cost estimation is not available.', 400, 'not_applied');
+    }
     const message = error instanceof Error ? error.message : 'model not in roster';
     throw new Fault('INVALID_INPUT', message);
   }
