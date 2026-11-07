@@ -18,8 +18,11 @@ export function instant(value: unknown, field: string): string {
   if (/[1-9]/.test(frac.slice(3))) throw new Fault('INVALID_INPUT', `${field} has sub-millisecond precision, which is not stored`);
   const ms = Number((frac + '000').slice(0, 3));
   if (mo < 1 || mo > 12 || h > 23 || mi > 59 || s > 59) return bad();
-  const local = Date.UTC(y, mo - 1, d, h, mi, s, ms);
-  const check = new Date(local);
+  // UTC setters preserve years 0..99 instead of Date.UTC's 1900 offset.
+  const check = new Date(0);
+  check.setUTCFullYear(y, mo - 1, d);
+  check.setUTCHours(h, mi, s, ms);
+  const local = check.getTime();
   if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) return bad();
   let offset = 0;
   if (m[8] !== 'Z') {

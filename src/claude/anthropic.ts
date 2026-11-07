@@ -70,7 +70,7 @@ async function call(fetchFn: FetchFn, key: string, path: string, method: string,
   const res = await fetchFn(`${API_BASE}${path}`, { method, headers: headers(key, beta), body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await res.text();
   if (!res.ok) throw new Error(`anthropic ${method} ${path} -> ${res.status}: ${text.slice(0, 300)}`);
-  return text.startsWith('{') ? JSON.parse(text) : text;
+  return /^[ \t\r\n]*\{/.test(text) ? JSON.parse(text) : text;
 }
 
 export function createMessage(fetchFn: FetchFn, key: string, body: Record<string, unknown>, beta?: string): Promise<unknown> {
