@@ -47,7 +47,7 @@ function rejectCallerControl(input: ContextCompileInput): void {
 
 function budgetFault(errors: readonly string[]): never {
   const message = errors.join(' ');
-  if (message.includes('MANDATORY_EXCEEDS_BUDGET')) throw new Fault('MANDATORY_EXCEEDS_BUDGET', message);
+  if (errors.some(error => error.startsWith('context_budget.mandatory: MANDATORY_EXCEEDS_BUDGET: '))) throw new Fault('MANDATORY_EXCEEDS_BUDGET', message);
   throw new Fault('INVALID_INPUT', message);
 }
 
