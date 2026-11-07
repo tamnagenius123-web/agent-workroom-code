@@ -9,6 +9,11 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 const TIMINGS = '.cache/test-timings.json';
 export async function runTests(list, { needsBuild = () => false } = {}) {
   const slots = Number(process.env.TEST_CONCURRENCY) || availableParallelism();
+  // Preserve the existing auto fallback, but reject unusable effective sizes
+  // before reading scheduling metadata or starting builds/tests.
+  if (!Number.isInteger(slots) || slots < 1) {
+    throw new Error('TEST_CONCURRENCY must resolve to a positive integer');
+  }
   const excl = existsSync('tests/test-exclusive.json') ? JSON.parse(readFileSync('tests/test-exclusive.json', 'utf8')).files ?? {} : {};
   const past = existsSync(TIMINGS) ? JSON.parse(readFileSync(TIMINGS, 'utf8')) : {};
   const locksOf = (f) => excl[f]?.locks ?? [];
@@ -41,8 +46,13 @@ export async function runTests(list, { needsBuild = () => false } = {}) {
       c.stdout.on('data', (d) => out += d); c.stderr.on('data', (d) => out += d);
       c.on('exit', (code, signal) => {
         if (killer) clearTimeout(killer);
-        const ms = Date.now() - s; results.set(f, { code, ms }); if (signal) out += `\n[test-run] runner killed by ${signal}\n`; past[f] = ms;
-        const tests = /# tests (\d+)/.exec(out)?.[1] ?? '?';
+        const ms = Date.now() - s;
+        const previous = results.get(f);
+        // Repeated explicit paths still run; a later success must not erase a failed attempt.
+        results.set(f, { code: previous && previous.code !== 0 ? previous.code : code, ms });
+        if (signal) out += `\n[test-run] runner killed by ${signal}\n`; past[f] = ms;
+        // Use the final top-level TAP count line, not a summary quoted inside a diagnostic.
+        const tests = [...out.matchAll(/^# tests (\d+)\r?$/gm)].at(-1)?.[1] ?? '?';
         console.error(`${code !== 0 ? 'FAIL' : 'ok  '} ${f}  ${tests} tests  ${(ms / 1000).toFixed(1)}s`);
         if (code !== 0) process.stderr.write(out);
         running--; locksOf(f).forEach((k) => held.delete(k)); pump();
