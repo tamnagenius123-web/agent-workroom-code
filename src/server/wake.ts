@@ -212,7 +212,7 @@ export class WakeProofs {
       FROM wake_evidence WHERE principal_id=? AND idempotency_key=?`)
       .bind(this.principal, input.idempotency_key).first<EvidenceRow>();
     if (!row) throw new Fault('TEMPORARY_FAILURE', 'Wake evidence was not stored.', 503, 'unknown', true);
-    if (row.payload_json !== extracted.payloadJson || row.stage !== extracted.stage) {
+    if (row.message_id !== extracted.messageId || row.payload_json !== extracted.payloadJson || row.stage !== extracted.stage) {
       throw new Fault('IDEMPOTENCY_CONFLICT', 'Key already has different wake evidence.', 409, 'not_applied', false, { idempotency_key: input.idempotency_key });
     }
     return this.present(row, row.id !== id);
