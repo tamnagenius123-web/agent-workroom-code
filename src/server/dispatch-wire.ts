@@ -10,6 +10,7 @@ import {
 import type { Database, Value } from './db.ts';
 import type { Workroom } from './domain.ts';
 import { aggregateUnitCosts, recordUnitCost, type RecordedUnitCost } from './unit-cost.ts';
+import { BoundaryUnavailableError } from '../boundary.ts';
 import { Fault, keySchema } from './contracts.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 
@@ -63,6 +64,18 @@ type ResultFn = (call: () => Promise<unknown>, wrapped?: boolean) => Promise<unk
 type RecordInput = z.infer<typeof unitCostRecordSchema>;
 type SummaryInput = z.infer<typeof unitCostSummarySchema>;
 type DispatchInput = z.infer<typeof agentDispatchSchema>;
+
+export interface DispatchGate {
+  estimateMicroUsd: typeof estimateMicroUsd;
+  dispatch: typeof dispatch;
+}
+
+const productionGate: DispatchGate = { estimateMicroUsd, dispatch };
+
+function boundaryFault(error: unknown): Fault | null {
+  if (!(error instanceof BoundaryUnavailableError)) return null;
+  return new Fault('NOT_AVAILABLE', error.message, 503, 'not_applied', false);
+}
 
 interface ReservationRow {
   reservation_id: string;
@@ -445,7 +458,7 @@ async function postReply(service: Workroom, room: string, idempotencyKeyValue: s
   return { ...row, message_id: messageId };
 }
 
-async function agentDispatch(service: Workroom, env: DispatchEnv, input: DispatchInput) {
+export async function dispatchWithGate(service: Workroom, env: DispatchEnv, input: DispatchInput, gate: DispatchGate = productionGate) {
   await service.authorize(input.room, true);
   await available(service.database);
   const apiKey = configuredKey(env);
@@ -454,8 +467,10 @@ async function agentDispatch(service: Workroom, env: DispatchEnv, input: Dispatc
   const maxTokens = input.max_tokens ?? 256;
   const project = input.project ?? 'test';
   try {
-    estimateMicroUsd(input.model, input.prompt.length, maxTokens, roster);
+    gate.estimateMicroUsd(input.model, input.prompt.length, maxTokens, roster);
   } catch (error) {
+    const closed = boundaryFault(error);
+    if (closed) throw closed;
     const message = error instanceof Error ? error.message : 'model not in roster';
     throw new Fault('INVALID_INPUT', message);
   }
@@ -490,7 +505,7 @@ async function agentDispatch(service: Workroom, env: DispatchEnv, input: Dispatc
   const runId = `run-${(await sha256Hex(`${service.principal}\n${input.idempotency_key}`)).slice(0, 12)}`;
   let report: DispatchReport;
   try {
-    report = await dispatch({
+    report = await gate.dispatch({
       model: input.model, project, prompt: input.prompt, maxTokens, run_id: runId, attempt_id: attemptId,
       ledger: openD1Ledger(db, service.principal, cap), roster, fetchImpl: guardedFetch(globalThis.fetch),
       apiKey, timeoutMs: 10_000, costRetries: 1, costDelayMs: 0,
@@ -498,6 +513,8 @@ async function agentDispatch(service: Workroom, env: DispatchEnv, input: Dispatc
   } catch (error) {
     const held = await one<{ reservation_id: string }>(db, 'SELECT reservation_id FROM budget_reservations WHERE attempt_id = ?', [attemptId]);
     if (!held) await db.prepare('DELETE FROM dispatch_calls WHERE id = ? AND result_json IS NULL').bind(freshId).all();
+    const closed = boundaryFault(error);
+    if (closed) throw closed;
     throw error;
   }
   const payload = JSON.stringify(storedReport(report));
@@ -522,7 +539,7 @@ export function registerDispatchTools(server: McpServer, service: Workroom, env:
   server.registerTool(AGENT_DISPATCH_TOOL.name, {
     description: AGENT_DISPATCH_TOOL.description, inputSchema: agentDispatchSchema,
     annotations: { ...hints, readOnlyHint: false, idempotentHint: true, openWorldHint: true },
-  }, ((input: DispatchInput) => result(() => agentDispatch(service, bindings, input), true)) as never);
+  }, ((input: DispatchInput) => result(() => dispatchWithGate(service, bindings, input), true)) as never);
 }
 
 const BODY_IDENTITY = ['room', 'idempotency_key', 'principal_id', 'actor_id', 'principal'];
@@ -543,5 +560,5 @@ export async function dispatchRoute(service: Workroom, env: object, request: Req
   const idempotency_key = keySchema.parse(request.headers.get('idempotency-key'));
   const merged = { ...body, room, idempotency_key };
   if (action === 'unit-costs') return recordCost(service, unitCostRecordSchema.parse(merged));
-  return agentDispatch(service, readDispatchEnv(env), agentDispatchSchema.parse(merged));
+  return dispatchWithGate(service, readDispatchEnv(env), agentDispatchSchema.parse(merged));
 }

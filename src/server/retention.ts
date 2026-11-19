@@ -20,6 +20,13 @@ export const RETENTION = {
   retention_runs_ms: 30 * 86400_000,
 };
 
+export type RetainFn = (db: Database, now?: number, mode?: 'dry_run' | 'delete') => Promise<Record<string, number | string>>;
+
 export async function retain(_db: Database, _now = Date.now(), _mode: 'dry_run' | 'delete' = 'dry_run'): Promise<Record<string, number | string>> {
   return boundaryUnavailable('src/server/retention.ts', 'retain', _db, _now, _mode);
+}
+
+// Production calls this with the fail-closed stub. Tests pass a gate double.
+export async function retainBookkeeping(db: Database, now = Date.now(), mode: 'dry_run' | 'delete' = 'dry_run', gate: RetainFn = retain) {
+  return gate(db, now, mode);
 }
