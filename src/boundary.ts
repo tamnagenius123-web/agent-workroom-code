@@ -5,8 +5,9 @@
 // gate side are present here only as boundary contracts: their types and
 // contract constants are declared locally, and every runtime entry point
 // fails closed with BoundaryUnavailableError. Phase 2 replaces these seams
-// with calls to the gate MCP server; until then no auth, gate, decision, or
+// with calls to the gate MCP server; until then no auth, gate, or
 // harness behavior is implemented — or simulated — in this repo.
+// The decision layer records shadow judgments and is not on the request path.
 
 export class BoundaryUnavailableError extends Error {
   readonly code = 'BOUNDARY_UNAVAILABLE' as const;

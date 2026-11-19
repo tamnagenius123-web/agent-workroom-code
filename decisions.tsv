@@ -1,2 +1,3 @@
 ts	decision	reason	owner	evidence
+2026-11-19T05:40:00Z	decision-layer	The decision layer lives in this repo and stays shadow-only. Live application stays off, and no request path imports it.	Ryan	tests/decision-layer.test.ts
 2026-11-19T06:10:00Z	suite-boundary	retain and estimateMicroUsd stay fail-closed stubs. Tests inject a gate double for core behavior. Gate deletion and reserve rules stay in gate-mcp.	operator	tests/files-expiry.test.ts tests/dispatch-wire.test.ts
