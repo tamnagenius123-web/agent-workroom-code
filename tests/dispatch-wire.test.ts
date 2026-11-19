@@ -273,7 +273,7 @@ test('missing budget tables are a clean not-available fault', async () => {
   } finally { await app.close(); }
 });
 
-test('the default gate stub fails the dispatch before any provider call', { timeout: 1_000 }, async () => {
+test('the default gate stub fails the dispatch before any provider call', async () => {
   const network = scriptedOutbound();
   const app = await harness({
     through: 9999,
@@ -281,11 +281,14 @@ test('the default gate stub fails the dispatch before any provider call', { time
     outboundService: network.outboundService,
   });
   try {
-    const started = Date.now();
-    const response = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-closed-001', {
-      schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
-    });
-    assert.ok(Date.now() - started < 1_000);
+    const response = await Promise.race([
+      rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-closed-001', {
+        schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
+      }),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('boundary error did not fail the dispatch within 1s')), 1_000);
+      }),
+    ]);
     assert.equal(response.status, 503);
     assert.equal(response.body.error?.code, 'NOT_AVAILABLE');
     assert.equal((response.body.error as { retryable?: boolean } | undefined)?.retryable, false);
