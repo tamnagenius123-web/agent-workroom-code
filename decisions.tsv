@@ -1,0 +1,2 @@
+ts	decision	reason	owner	evidence
+2026-11-19T05:40:00Z	decision-layer	The decision layer lives in this repo and stays shadow-only. Live application stays off, and no request path imports it.	Ryan	tests/decision-layer.test.ts
