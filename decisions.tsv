@@ -1,0 +1,2 @@
+ts	decision	reason	owner	evidence
+2026-11-19T05:55:00Z	suite-boundary	File retention and OpenRouter dispatch stay callable in this repo. The file tests and dispatch tests call them; a fail-closed stub made those tests red and hung the unknown-acceptance case.	operator	tests/files-expiry.test.ts tests/files-schema.test.ts tests/fold-propose.test.ts tests/dispatch-wire.test.ts
