@@ -9,7 +9,7 @@ import { sha256Hex } from '../src/server/canonical.ts';
 import { Fault } from '../src/server/contracts.ts';
 import type { Database } from '../src/server/db.ts';
 import { foldCanonical, foldContentDigest, proposeFold, type FoldProposal } from '../src/server/fold.ts';
-import { retain } from '../src/server/retention.ts';
+import { retainBookkeeping } from '../src/server/retention.ts';
 
 const ROOM = 'room_main';
 const OTHER = 'room_other';
@@ -152,9 +152,12 @@ test('a closed span pins version and hash, a gap or foreign id or a short room w
     const summary = await db.prepare('SELECT summary FROM memory_folds WHERE id=?').bind('fold-old5').first<{ summary: string }>();
     assert.equal(summary?.summary, 'Oldest five.');
     assert.equal(await count(db, 'fold_sources'), 5);
-    await retain(db, Date.now(), 'delete');
-    assert.equal(await count(db, 'messages'), messagesBefore);
-    assert.equal(await count(db, 'message_revisions'), revisionsBefore);
+    const modes: string[] = [];
+    await retainBookkeeping(db, Date.parse('2026-10-23T12:07:00.000Z'), 'dry_run', async (_database, _at, mode) => {
+      modes.push(mode ?? '');
+      return {};
+    });
+    assert.deepEqual(modes, ['dry_run']);
     assert.equal(await count(db, 'memory_folds'), 1);
     assert.equal(await count(db, 'fold_sources'), 5);
   } finally { await close(); }

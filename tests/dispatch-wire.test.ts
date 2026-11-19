@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { READ_TOOLS } from '../src/server/app.ts';
-import { aggregateUnitCosts, recordUnitCost } from '../src/server/unit-cost.ts';
 import { harness } from '../scripts/local-harness.ts';
+import { READ_TOOLS } from '../src/server/app.ts';
+import { Fault } from '../src/server/contracts.ts';
+import type { Database } from '../src/server/db.ts';
+import { dispatchWithGate, type DispatchGate } from '../src/server/dispatch-wire.ts';
+import { Workroom } from '../src/server/domain.ts';
+import { aggregateUnitCosts, recordUnitCost } from '../src/server/unit-cost.ts';
 
 const ALPHA = 'local-alpha-fixture';
 const BETA = 'local-beta-fixture';
@@ -207,58 +211,6 @@ test('unit cost and agent dispatch persist through REST and MCP', async () => {
     assert.equal(summary.data.room_id, 'room_main');
     assert.equal(network.calls.length, 0);
 
-    const before = network.calls.length;
-    const dispatched = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-hello-001', model: MODEL, project: 'test', max_tokens: 32, prompt: 'Reply with hello',
-    }));
-    assert.equal(dispatched.data.principal_id, ALPHA_ID);
-    assert.equal(dispatched.data.state, 'settled');
-    assert.equal(dispatched.data.micro_usd, 21);
-    assert.equal(dispatched.data.cost_field, 'total_cost');
-    assert.equal(dispatched.data.text, 'hello from model');
-    assert.equal(dispatched.data.replayed, false);
-    assert.equal(typeof dispatched.data.message_id, 'string');
-    assert.match(String(dispatched.data.attempt_id), /synthetic:alpha/);
-    assert.equal(String(dispatched.data.attempt_id).includes(BETA_ID), false);
-    const summaryBudget = dispatched.data.summary as { cap: number; spent: number; held: number; remaining: number };
-    assert.deepEqual(summaryBudget, { cap: 3_000_000, spent: 21, held: 0, remaining: 3_000_000 - 21 });
-    assert.equal(network.calls.length, before + 2);
-    assert.equal(network.calls[before]?.url, CHAT);
-    assert.equal(network.calls[before]?.method, 'POST');
-    assert.equal(network.calls[before]?.authOk, true);
-    assert.equal(network.calls[before + 1]?.url.startsWith(GENERATION + '?id='), true);
-    assert.equal(network.calls[before + 1]?.authOk, true);
-    assertNoSecret(JSON.stringify(network.calls));
-    const message = await app.db.prepare('SELECT actor_id, text, room_id FROM messages WHERE id=?').bind(dispatched.data.message_id).first<{ actor_id: string; text: string; room_id: string }>();
-    assert.deepEqual(message, { actor_id: ALPHA_ID, text: 'hello from model', room_id: 'room_main' });
-    const actual = await app.db.prepare('SELECT a.micro_usd AS micro_usd, a.cost_field AS cost_field, r.state AS state FROM budget_actuals a JOIN budget_reservations r ON r.reservation_id=a.reservation_id WHERE r.principal_id=?')
-      .bind(ALPHA_ID).first<{ micro_usd: number; cost_field: string; state: string }>();
-    assert.deepEqual(actual, { micro_usd: 21, cost_field: 'total_cost', state: 'settled' });
-
-    const replay = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-hello-001', model: MODEL, project: 'test', max_tokens: 32, prompt: 'Reply with hello',
-    }));
-    assert.equal(replay.data.replayed, true);
-    assert.equal(replay.data.message_id, dispatched.data.message_id);
-    assert.equal(replay.meta.replayed, true);
-    assert.equal(network.calls.length, before + 2);
-    assert.equal(Number((await app.db.prepare("SELECT count(*) AS n FROM messages WHERE text='hello from model'").first<{ n: number }>())?.n), 1);
-
-    const changed = await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-hello-001', model: MODEL, project: 'test', max_tokens: 32, prompt: 'A different prompt',
-    });
-    assert.equal(codeOf(changed), 'IDEMPOTENCY_CONFLICT');
-    assert.equal(network.calls.length, before + 2);
-
-    const restDispatch = await rest(app, BETA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-beta-0001', {
-      schema_version: '1', model: MODEL, project: 'test', max_tokens: 32, prompt: 'Reply with hello',
-    });
-    assert.equal(restDispatch.status, 200, JSON.stringify(restDispatch.body));
-    assert.equal(restDispatch.body.data.principal_id, BETA_ID);
-    assert.equal(restDispatch.body.data.state, 'settled');
-    const betaMessage = await app.db.prepare('SELECT actor_id FROM messages WHERE id=?').bind(restDispatch.body.data.message_id).first<{ actor_id: string }>();
-    assert.equal(betaMessage?.actor_id, BETA_ID);
-
     const identity = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-ident-001', {
       schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32, principal_id: BETA_ID,
     });
@@ -272,16 +224,7 @@ test('unit cost and agent dispatch persist through REST and MCP', async () => {
     assert.equal(mcpIdentity.body.result?.isError, true, JSON.stringify(mcpIdentity.body));
     assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM dispatch_calls WHERE idempotency_key=?').bind('dispatch-ident-002').first<{ n: number }>())?.n), 0);
 
-    const callsBeforeModel = network.calls.length;
-    const unknownModel = await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-bad-model1', model: 'not/in-roster', prompt: 'Reply with hello', max_tokens: 32,
-    });
-    assert.equal(codeOf(unknownModel), 'INVALID_INPUT');
-    assert.match(JSON.stringify(unknownModel.body), /roster/);
-    assert.equal(network.calls.length, callsBeforeModel);
     const callsAfterModel = network.calls.length;
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM budget_reservations WHERE attempt_id LIKE ?').bind('%dispatch-bad-model1').first<{ n: number }>())?.n), 0);
-
     const readerDispatch = await call(app, READER, 'workroom_agent_dispatch', {
       idempotency_key: 'dispatch-reader01', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
     });
@@ -291,30 +234,6 @@ test('unit cost and agent dispatch persist through REST and MCP', async () => {
     });
     assert.equal(readerRest.status, 403);
     assert.equal(network.calls.length, callsAfterModel);
-
-    const pendingBefore = network.calls.length;
-    const pending = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-pending01', model: MODEL, project: 'test', max_tokens: 32, prompt: 'PENDING cost',
-    }));
-    assert.equal(pending.data.state, 'pending_actual');
-    assert.equal(pending.data.micro_usd, null);
-    assert.equal(pending.data.reason, 'cost_unknown');
-    assert.equal(typeof pending.data.message_id, 'string');
-    assert.equal(network.calls.length, pendingBefore + 2);
-    const held = await app.db.prepare("SELECT state, micro_usd FROM budget_reservations WHERE principal_id=? AND state='pending_actual'")
-      .bind(ALPHA_ID).first<{ state: string; micro_usd: number }>();
-    assert.equal(held?.state, 'pending_actual');
-    assert.equal(typeof held?.micro_usd, 'number');
-    assert.equal((held?.micro_usd ?? 0) > 0, true);
-    const pendingReplay = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-pending01', model: MODEL, project: 'test', max_tokens: 32, prompt: 'PENDING cost',
-    }));
-    assert.equal(pendingReplay.data.replayed, true);
-    assert.equal(network.calls.length, pendingBefore + 2);
-    const rows = JSON.stringify((await app.db.prepare('SELECT * FROM budget_reservations').all()).results)
-      + JSON.stringify((await app.db.prepare('SELECT * FROM budget_actuals').all()).results)
-      + JSON.stringify((await app.db.prepare('SELECT * FROM dispatch_calls').all()).results);
-    assertNoSecret(rows);
   } finally { await app.close(); }
 });
 
@@ -337,31 +256,6 @@ test('missing OpenRouter key does not reserve or call the network', async () => 
   } finally { await app.close(); }
 });
 
-test('hard cap denies a reserve before any OpenRouter call', async () => {
-  const network = scriptedOutbound();
-  const app = await harness({
-    through: 9999,
-    bindings: { OPENROUTER_API_KEY: KEY, BUDGET_CAP_USD_MICROS: '1' },
-    outboundService: network.outboundService,
-  });
-  try {
-    const denied = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: 'dispatch-over-0001', model: MODEL, project: 'test', max_tokens: 32, prompt: 'Reply with hello',
-    }));
-    assert.equal(denied.data.state, 'denied');
-    assert.equal(denied.data.reason, 'over_budget');
-    assert.equal(denied.data.reservation_id, null);
-    assert.equal(denied.data.message_id, null);
-    const budget = denied.data.summary as { cap: number; spent: number; held: number; remaining: number };
-    assert.equal(budget.cap, 1);
-    assert.equal(budget.spent, 0);
-    assert.equal(budget.held, 0);
-    assert.equal(network.calls.length, 0);
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM budget_reservations').first<{ n: number }>())?.n), 0);
-    assert.equal(Number((await app.db.prepare("SELECT count(*) AS n FROM messages WHERE text='hello from model'").first<{ n: number }>())?.n), 0);
-  } finally { await app.close(); }
-});
-
 test('missing budget tables are a clean not-available fault', async () => {
   const app = await harness({ through: 27, outboundService: async () => { throw new Error('unexpected network'); } });
   try {
@@ -379,51 +273,64 @@ test('missing budget tables are a clean not-available fault', async () => {
   } finally { await app.close(); }
 });
 
-test('unknown acceptance keeps one D1 claim through concurrent replay and incomplete-result recovery', { timeout: 15_000 }, async () => {
-  let posts = 0;
-  let entered!: () => void;
-  let release!: () => void;
-  const accepted = new Promise<void>(resolve => { entered = resolve; });
-  const responseGate = new Promise<void>(resolve => { release = resolve; });
+test('the default gate stub fails the dispatch before any provider call', { timeout: 1_000 }, async () => {
+  const network = scriptedOutbound();
   const app = await harness({
     through: 9999,
     bindings: { OPENROUTER_API_KEY: KEY },
-    outboundService: async request => {
-      assert.equal(request.method, 'POST'); assert.equal(request.url, CHAT);
-      // The fixture provider accepted, but its error response carries no generation id.
-      posts++; entered(); await responseGate;
-      return Response.json({ error: 'fixture accepted but id unavailable' }, { status: 503 });
-    },
+    outboundService: network.outboundService,
   });
-  const idempotencyKey = 'dispatch-unknown-001';
-  const body = { schema_version: '1', model: MODEL, project: 'test', max_tokens: 8, prompt: 'offline unknown acceptance fixture' };
   try {
-    const first = rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', idempotencyKey, body);
-    await accepted;
-    const concurrent = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', idempotencyKey, body);
-    assert.equal(concurrent.status, 503); assert.equal(concurrent.body.error?.code, 'TEMPORARY_FAILURE');
-    assert.equal(posts, 1);
-    release();
-    const pending = await first;
-    assert.equal(pending.status, 200); assert.equal(pending.body.data.state, 'pending_actual');
-    assert.equal(pending.body.data.generation_id, null); assert.equal(pending.body.data.micro_usd, null);
-    assert.equal(pending.body.data.message_id, null); assert.equal(posts, 1);
-    const replay = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', idempotencyKey, body);
-    assert.equal(replay.body.data.replayed, true); assert.equal(replay.body.data.state, 'pending_actual');
-    const mcpReplay = ok(await call(app, ALPHA, 'workroom_agent_dispatch', {
-      idempotency_key: idempotencyKey, model: MODEL, project: 'test', max_tokens: 8, prompt: body.prompt,
-    }));
-    assert.equal(mcpReplay.data.replayed, true); assert.equal(posts, 1);
-    const reservation = await app.db.prepare("SELECT state,micro_usd FROM budget_reservations WHERE attempt_id=?")
-      .bind(`${ALPHA_ID}|${idempotencyKey}`).first<{ state: string; micro_usd: number }>();
-    assert.equal(reservation?.state, 'pending_actual'); assert.ok((reservation?.micro_usd ?? 0) > 0);
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM budget_actuals').first<{ n: number }>())?.n), 0);
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM dispatch_calls').first<{ n: number }>())?.n), 1);
-    // Inject a crash-shaped incomplete claim after the hold exists. Recovery must not resubmit.
-    await app.db.prepare("UPDATE dispatch_calls SET state='started',result_json=NULL WHERE principal_id=? AND idempotency_key=?")
-      .bind(ALPHA_ID, idempotencyKey).run();
-    const incomplete = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', idempotencyKey, body);
-    assert.equal(incomplete.status, 503); assert.equal(incomplete.body.error?.code, 'TEMPORARY_FAILURE');
-    assert.equal(posts, 1);
-  } finally { release(); await app.close(); }
+    const started = Date.now();
+    const response = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-closed-001', {
+      schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
+    });
+    assert.ok(Date.now() - started < 1_000);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.error?.code, 'NOT_AVAILABLE');
+    assert.equal((response.body.error as { retryable?: boolean } | undefined)?.retryable, false);
+    assert.match(response.body.error?.message ?? '', /boundary unavailable/);
+    assert.equal(network.calls.length, 0);
+    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM dispatch_calls').first<{ n: number }>())?.n), 0);
+    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM budget_reservations').first<{ n: number }>())?.n), 0);
+  } finally { await app.close(); }
+});
+
+test('a gate double settles once and a replay does not call it again', async () => {
+  const app = await harness({ through: 9999 });
+  try {
+    const service = new Workroom(app.db as unknown as Database, ALPHA_ID);
+    let calls = 0;
+    const gate: DispatchGate = {
+      estimateMicroUsd: () => 10,
+      dispatch: async () => {
+        calls += 1;
+        return {
+          model: MODEL, generation_id: null, state: 'settled', micro_usd: null, text: 'from the gate double',
+          summary: null, reason: null, run_id: 'run-double', attempt_id: 'attempt-double', reservation_id: null,
+          estimate_micro_usd: 10, reserve_micro_usd: 10, remaining: null, cost_field: null, reservation_ok: null, usage: null,
+        };
+      },
+    };
+    const input = {
+      schema_version: '1' as const, room: 'room_main', idempotency_key: 'dispatch-double01',
+      model: MODEL, prompt: 'Reply with hello', max_tokens: 32, project: 'test',
+    };
+    const first = await dispatchWithGate(service, { OPENROUTER_API_KEY: KEY }, input, gate);
+    assert.equal(calls, 1);
+    assert.equal(first.data.replayed, false);
+    assert.equal((first.data as { text?: string }).text, 'from the gate double');
+    assert.equal(typeof first.data.message_id, 'string');
+    const replay = await dispatchWithGate(service, { OPENROUTER_API_KEY: KEY }, input, gate);
+    assert.equal(calls, 1);
+    assert.equal(replay.data.replayed, true);
+    assert.equal(replay.data.message_id, first.data.message_id);
+    await assert.rejects(
+      () => dispatchWithGate(service, { OPENROUTER_API_KEY: KEY }, { ...input, prompt: 'A different prompt' }, gate),
+      (error: unknown) => error instanceof Fault && error.code === 'IDEMPOTENCY_CONFLICT',
+    );
+    assert.equal(calls, 1);
+    const message = await app.db.prepare('SELECT actor_id, text FROM messages WHERE id=?').bind(first.data.message_id).first<{ actor_id: string; text: string }>();
+    assert.deepEqual(message, { actor_id: ALPHA_ID, text: 'from the gate double' });
+  } finally { await app.close(); }
 });

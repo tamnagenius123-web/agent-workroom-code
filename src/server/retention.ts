@@ -1,3 +1,12 @@
+// BOUNDARY CONTRACT — mirrors src/server/retention.ts in the gate MCP repo
+// (agent-workroom-gate-mcp), split out under owner decision D5-cm (2026-11-01).
+//
+// RETENTION windows are policy constants (contract data) and are declared
+// here. The retention run itself — which counts and deletes auth/delivery
+// bookkeeping rows — is gate-side behavior and fails closed with
+// BoundaryUnavailableError; no deletion is ever simulated in this repo.
+// Phase 2 replaces this seam with gate-MCP calls.
+import { boundaryUnavailable } from '../boundary.ts';
 import type { Database } from './db.ts';
 
 // R8: retention for auth/delivery bookkeeping. Messages, operations and audit stay immutable (append-only record).
@@ -11,26 +20,13 @@ export const RETENTION = {
   retention_runs_ms: 30 * 86400_000,
 };
 
-// Dry run by default: counts what would be deleted. Deletes only when mode==='delete'.
-export async function retain(db: Database, now = Date.now(), mode: 'dry_run' | 'delete' = 'dry_run') {
-  const r = RETENTION;
-  const jobs: [string, string, (string | number)[]][] = [
-    ['oauth_codes', 'DELETE FROM oauth_codes WHERE expires_at<?', [now - r.oauth_codes_ms]],
-    ['oauth_tokens', 'DELETE FROM oauth_tokens WHERE COALESCE(revoked_at, expires_at)<? AND expires_at<?', [now - r.oauth_tokens_ms, now]],
-    ['consent_flows', 'DELETE FROM consent_flows WHERE expires_at<?', [now - r.consent_flows_ms]],
-    ['auth_audit', 'DELETE FROM auth_audit WHERE at<?', [now - r.auth_audit_ms]],
-    ['webhook_outbox', "DELETE FROM webhook_outbox WHERE status IN ('delivered','failed') AND COALESCE(terminal_at, created_at)<?", [now - r.webhook_outbox_ms]],
-    ['requester_gate', 'DELETE FROM requester_gate WHERE locked_until<? AND window_start<?', [now, now - r.gate_ms]],
-    ['retention_runs', 'DELETE FROM retention_runs WHERE at<?', [now - r.retention_runs_ms]],
-  ];
-  const out: Record<string, number | string> = {};
-  for (const [name, sql, args] of jobs) {
-    try {
-      if (mode === 'delete') { const res = await db.prepare(sql).bind(...args).all() as unknown as { meta?: { changes?: number } }; out[name] = res.meta?.changes ?? 0; }
-      else out[name] = (await db.prepare(sql.replace(/^DELETE FROM (\w+)/, 'SELECT COUNT(*) n FROM $1')).bind(...args).first<{ n: number }>())?.n ?? 0;
-    }
-    catch (e) { out[name] = 'error: ' + String((e as Error).message).slice(0, 80); }
-  }
-  try { await db.prepare('INSERT INTO retention_runs(at,result_json) VALUES (?,?)').bind(now, JSON.stringify({ mode, ...out })).all(); } catch { /* pre-0010 schema */ }
-  return out;
+export type RetainFn = (db: Database, now?: number, mode?: 'dry_run' | 'delete') => Promise<Record<string, number | string>>;
+
+export async function retain(_db: Database, _now = Date.now(), _mode: 'dry_run' | 'delete' = 'dry_run'): Promise<Record<string, number | string>> {
+  return boundaryUnavailable('src/server/retention.ts', 'retain', _db, _now, _mode);
+}
+
+// Production calls this with the fail-closed stub. Tests pass a gate double.
+export async function retainBookkeeping(db: Database, now = Date.now(), mode: 'dry_run' | 'delete' = 'dry_run', gate: RetainFn = retain) {
+  return gate(db, now, mode);
 }
