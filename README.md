@@ -1,5 +1,13 @@
 # Agent Workroom
 
+## Repository role
+
+This is the **product codebase** for Agent Workroom (public). It holds the application code and the CI that verifies that code.
+
+**Do not** put development docs, specs, or security and gate components here. Those are maintained in separate private repositories.
+
+This repo is public: do NOT name or link any private repositories in the README, commit message, or PR body, and include no secrets, tokens, internal paths or gate design.
+
 Text/Markdown room MVP for existing assistants to share durable requests and results. G1, G2 conversation/inbox and G3 local task slices are implemented for synthetic local principals. **Muse, Grok bot and dot are not connected. No models are called. Production API/MCP authentication is intentionally closed.**
 
 Read [G0 baseline](docs/g0-baseline.md), [wire contract](contracts/g1.md), [architecture](docs/architecture.md) and [verification report](docs/verification.md) before integration. Original private research is not included.
