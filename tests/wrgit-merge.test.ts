@@ -497,7 +497,7 @@ test('0063 extends the WG-2 wrgit index and 0061 stays the WG-2 store', async ()
   assert.match(markdown, /\| 0061 \| .*0061_wrgit\.sql.* \| used \|/);
   assert.match(markdown, /\| 0062 \| .*0062_wrgit_ws\.sql.* \| used \|/);
   assert.match(markdown, /\| 0063 \| .*0063_wrgit_merge\.sql.* \| used \|/);
-  assert.match(markdown, /^merge_order:.*0060 0061 0062 0063 0068 0071 0072 0073 0074 0075 0077\s*$/m);
+  assert.match(markdown, /^merge_order:.*0060 0061 0062 0063 0068 0071 0072 0073 0074 0075 0077 0078\s*$/m);
   const registryModule = await import('../src/phase-contracts/migrations.ts');
   const registry = registryModule.MIGRATION_REGISTRY as Record<string, { status: string; unit: string }>;
   assert.equal(registry['0061']?.status, 'used');
