@@ -1,0 +1,2 @@
+ts	decision	reason	owner	evidence
+2026-11-19T06:10:00Z	suite-boundary	retain and estimateMicroUsd stay fail-closed stubs. Tests inject a gate double for core behavior. Gate deletion and reserve rules stay in gate-mcp.	operator	tests/files-expiry.test.ts tests/dispatch-wire.test.ts

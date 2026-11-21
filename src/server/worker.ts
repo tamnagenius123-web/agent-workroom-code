@@ -1,4 +1,4 @@
-import { retain } from './retention.ts';
+import { retainBookkeeping } from './retention.ts';
 import { deliver, wakeAuthFrom } from './notify.ts';
 import { expireFiles } from './files.ts';
 import { createApp } from './app.ts';
@@ -20,7 +20,7 @@ const app = createApp((request, env) => g5Authenticate(request, env as G5Env), {
   legacy: env => (env as G5Env).MCP_COMPAT === '1',
 });
 interface Ctx { waitUntil(p: Promise<unknown>): void }
-export default { async scheduled(_e: unknown, env: Env, ctx: Ctx) { ctx.waitUntil(deliver(env.DB, undefined, wakeAuthFrom(env))); ctx.waitUntil(expireFiles(env.DB, env.FILES ?? null, Date.now()).catch(() => undefined)); if (new Date().getUTCMinutes() === 7) ctx.waitUntil(retain(env.DB, Date.now(), (env as { RETENTION_MODE?: string }).RETENTION_MODE === 'delete' ? 'delete' : 'dry_run')); },
+export default { async scheduled(_e: unknown, env: Env, ctx: Ctx) { ctx.waitUntil(deliver(env.DB, undefined, wakeAuthFrom(env))); ctx.waitUntil(expireFiles(env.DB, env.FILES ?? null, Date.now()).catch(() => undefined)); if (new Date().getUTCMinutes() === 7) ctx.waitUntil(retainBookkeeping(env.DB, Date.now(), (env as { RETENTION_MODE?: string }).RETENTION_MODE === 'delete' ? 'delete' : 'dry_run')); },
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
   const response = await app.fetch(request, env, ctx);
   if (response.status !== 401) return response;

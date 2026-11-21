@@ -5,7 +5,7 @@ import { Miniflare } from 'miniflare';
 import { migrate } from '../scripts/local-harness.ts';
 import { cloneD1, D1_TEMPLATE_NAME } from '../scripts/d1-template.ts';
 import type { Database } from '../src/server/db.ts';
-import { retain } from '../src/server/retention.ts';
+import { retainBookkeeping } from '../src/server/retention.ts';
 
 const SHA = 'a'.repeat(64);
 
@@ -62,7 +62,7 @@ test('0023 splits into one newline-free statement per trigger', async () => {
   for (const trigger of raw) assert.equal(trigger.includes('\n'), false);
 });
 
-test('file rows only tombstone once, refs are immutable, and retain leaves them', async () => {
+test('file rows only tombstone once, refs are immutable, and bookkeeping goes to the gate', async () => {
   const { db, close } = await start();
   try {
     const created = 1_700_000_000_000;
@@ -112,19 +112,15 @@ test('file rows only tombstone once, refs are immutable, and retain leaves them'
     );
     assert.equal(await count(db, 'message_file_refs'), 1);
 
-    const before = {
-      messages: await count(db, 'messages'),
-      shared_files: await count(db, 'shared_files'),
-      message_file_refs: await count(db, 'message_file_refs'),
-    };
-    const now = Date.parse('2026-10-23T12:00:00.000Z');
-    await retain(db, now, 'dry_run');
-    await retain(db, now, 'delete');
-    assert.deepEqual({
-      messages: await count(db, 'messages'),
-      shared_files: await count(db, 'shared_files'),
-      message_file_refs: await count(db, 'message_file_refs'),
-    }, before);
+    const modes: string[] = [];
+    const now = Date.parse('2026-10-23T12:07:00.000Z');
+    await retainBookkeeping(db, now, 'dry_run', async (_database, _at, mode) => {
+      modes.push(mode ?? '');
+      return {};
+    });
+    assert.deepEqual(modes, ['dry_run']);
+    assert.equal(await count(db, 'messages'), 2);
+    assert.equal(await count(db, 'message_file_refs'), 1);
     const text = await db.prepare("SELECT text FROM messages WHERE id='m1'").first<{ text: string }>();
     assert.equal(text?.text, 'see the file');
     const tomb = await db.prepare('SELECT deleted_at_ms, tombstone_reason FROM shared_files WHERE id=?').bind('file-1')

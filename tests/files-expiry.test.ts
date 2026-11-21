@@ -5,8 +5,9 @@ import { migrate } from '../scripts/local-harness.ts';
 import { cloneD1, D1_TEMPLATE_NAME } from '../scripts/d1-template.ts';
 import { Fault } from '../src/server/contracts.ts';
 import type { Database } from '../src/server/db.ts';
+import { BoundaryUnavailableError } from '../src/boundary.ts';
 import { expireFiles, getFile, readFile, uploadFile, type FileBucket, type FileObjectBody, type UploadFileInput } from '../src/server/files.ts';
-import { retain } from '../src/server/retention.ts';
+import { retain, retainBookkeeping } from '../src/server/retention.ts';
 
 const ROOM = 'room_main';
 const ALPHA = 'synthetic:alpha';
@@ -181,28 +182,17 @@ test('expireFiles tombstones after delete, retries a delete error, and marks a m
   } finally { await close(); }
 });
 
-test('retain leaves the tombstone and the citing message, and GC stops at 50 rows', async () => {
+test('expireFiles tombstones one file and GC stops at 50 rows', async () => {
   const { db, close } = await start();
   try {
     const bucket = new Bucket();
     const stored = await upload(db, bucket, { env: { FILE_TTL_SECONDS: '60' } });
-    await db.prepare("INSERT INTO messages(id,room_id,actor_id,text,format,created_at) VALUES ('m1','room_main','synthetic:alpha','cite me','text','2026-10-23T12:00:00.000Z')").all();
-    await db.prepare("INSERT INTO message_file_refs(message_id,file_id,position) VALUES ('m1',?,0)").bind(stored.file.id).all();
     const at = NOW + 60_000;
-    await expireFiles(db, bucket, at);
-    const before = await db.prepare('SELECT deleted_at_ms, tombstone_reason FROM shared_files WHERE id=?').bind(stored.file.id)
+    const expired = await expireFiles(db, bucket, at);
+    assert.equal(expired.marked, 1);
+    const tomb = await db.prepare('SELECT deleted_at_ms, tombstone_reason FROM shared_files WHERE id=?').bind(stored.file.id)
       .first<{ deleted_at_ms: number; tombstone_reason: string }>();
-    await retain(db, at, 'dry_run');
-    await retain(db, at, 'delete');
-    const after = await db.prepare('SELECT deleted_at_ms, tombstone_reason FROM shared_files WHERE id=?').bind(stored.file.id)
-      .first<{ deleted_at_ms: number; tombstone_reason: string }>();
-    assert.deepEqual(after, before);
-    const message = await db.prepare("SELECT text FROM messages WHERE id='m1'").first<{ text: string }>();
-    assert.equal(message?.text, 'cite me');
-    const refs = await db.prepare("SELECT COUNT(*) AS n FROM message_file_refs WHERE message_id='m1'").first<{ n: number }>();
-    assert.equal(Number(refs?.n), 1);
-    const files = await db.prepare('SELECT COUNT(*) AS n FROM shared_files').first<{ n: number }>();
-    assert.equal(Number(files?.n), 1);
+    assert.equal(tomb?.tombstone_reason, 'expired');
 
     const created = NOW;
     const expires = created + 3_600_000;
@@ -224,5 +214,31 @@ test('retain leaves the tombstone and the citing message, and GC stops at 50 row
     const next = await expireFiles(db, bucket, expires);
     assert.equal(next.marked, 1);
     assert.equal(next.examined, 1);
+  } finally { await close(); }
+});
+
+test('default retain fails closed', async () => {
+  const { db, close } = await start();
+  try {
+    await assert.rejects(() => retain(db, NOW, 'dry_run'), (error: unknown) => error instanceof BoundaryUnavailableError);
+  } finally { await close(); }
+});
+
+test('retention bookkeeping uses the gate double and leaves the tombstone expireFiles wrote', async () => {
+  const { db, close } = await start();
+  try {
+    const bucket = new Bucket();
+    const stored = await upload(db, bucket, { env: { FILE_TTL_SECONDS: '60' } });
+    const at = NOW + 60_000;
+    await expireFiles(db, bucket, at);
+    const modes: string[] = [];
+    await retainBookkeeping(db, at, 'dry_run', async (_database, _now, mode) => {
+      modes.push(mode ?? '');
+      return {};
+    });
+    assert.deepEqual(modes, ['dry_run']);
+    const tomb = await db.prepare('SELECT tombstone_reason FROM shared_files WHERE id=?').bind(stored.file.id)
+      .first<{ tombstone_reason: string }>();
+    assert.equal(tomb?.tombstone_reason, 'expired');
   } finally { await close(); }
 });
