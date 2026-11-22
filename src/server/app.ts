@@ -103,6 +103,7 @@ export function createApp(authenticate: Authenticate, options: AppOptions = {}) 
       }
       if (url.pathname === '/v1/telegram/notify') {
         if (request.method !== 'POST' || !write) throw new Fault('FORBIDDEN', 'POST with write scope only.', 403);
+        await service.authorize(ROOM, true);
         const input = bodySchema.pick({ text: true }).strict().parse(jsonBody(await boundedBody(request)));
         const sent = await telegramNotify(`[${principal}] ${input.text}`, env as TelegramEnv, { fetch: (u, i) => fetch(u, i) });
         if (!sent.ok) throw new Fault(sent.error === 'TELEGRAM_NOT_CONFIGURED' ? 'UNSUPPORTED' : 'UNAVAILABLE', sent.error ?? 'Telegram failed.', sent.error === 'TELEGRAM_NOT_CONFIGURED' ? 503 : 502);
