@@ -48,7 +48,7 @@ test('the live bound holds at most 225 micro-USD', () => {
 });
 
 test('one mock attempt keeps the same ids, and the counterexamples stay visible', async () => {
-  const app = await harness({ through: 80, seed: true });
+  const app = await harness({ through: 81, seed: true });
   try {
     const db = app.db;
     await base(db);

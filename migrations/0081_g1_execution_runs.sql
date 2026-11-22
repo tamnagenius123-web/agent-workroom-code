@@ -1,10 +1,12 @@
 -- G1 run/attempt envelope. This file is not applied to a remote database by the change that adds it.
+-- 0080 is gate telegram_topics on the shared D1. This unit is 0081.
 -- The task, lease, intent, budget, and message tables stay the authority. These rows only bind one attempt.
-CREATE TABLE execution_cancels (
+-- IF NOT EXISTS makes a re-run harmless.
+CREATE TABLE IF NOT EXISTS execution_cancels (
   task_id TEXT PRIMARY KEY,
   generation INTEGER NOT NULL CHECK (generation >= 0)
 );
-CREATE TABLE execution_runs (
+CREATE TABLE IF NOT EXISTS execution_runs (
   run_id TEXT PRIMARY KEY,
   attempt_id TEXT NOT NULL UNIQUE,
   project TEXT NOT NULL,
@@ -27,7 +29,9 @@ CREATE TABLE execution_runs (
   trace_json TEXT NOT NULL CHECK (json_valid(trace_json)),
   created_at INTEGER NOT NULL
 );
-CREATE TABLE execution_receipts (
+CREATE INDEX IF NOT EXISTS execution_runs_attempt ON execution_runs(attempt_id);
+CREATE INDEX IF NOT EXISTS execution_runs_task ON execution_runs(task_id);
+CREATE TABLE IF NOT EXISTS execution_receipts (
   receipt_id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL,
   attempt_id TEXT NOT NULL,
@@ -42,3 +46,4 @@ CREATE TABLE execution_receipts (
   detail TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS execution_receipts_run ON execution_receipts(run_id);

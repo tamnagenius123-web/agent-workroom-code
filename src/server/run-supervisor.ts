@@ -1,6 +1,7 @@
 // Thin G1 supervisor. It does not replace the task engine. It reads the existing
 // task, lease, and intent rows, then drives the existing budget ledger and the
-// one OpenRouter client. Migration 0080 only stores the envelope and the trace.
+// one OpenRouter client. Migration 0081 only stores the envelope and the trace.
+// 0080 belongs to gate telegram_topics on the shared D1.
 import { sha256 } from '../auth/crypto.ts';
 import {
   chatOnce, estimateMicroUsd, getGenerationCost, loadRoster, reservationMicroUsd,
