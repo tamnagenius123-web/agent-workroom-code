@@ -12,10 +12,20 @@ import { openD1Ledger } from './dispatch-wire.ts';
 
 export const VERIFIER = 'verifier:g1';
 export const LIVE_MODEL = 'z-ai/glm-5.3-flash';
-export const LIVE_MAX_TOKENS = 32;
+export const LIVE_MAX_TOKENS = 1024;
 export const LIVE_MAX_PROMPT_CHARS = 120;
-/** Hold for a 120-character prompt and 32 completion tokens on the flash price. */
-export const LIVE_MAX_HOLD_MICRO_USD = 225;
+/** Hold for a 120-character prompt and 1024 completion tokens on the flash price. */
+export const LIVE_MAX_HOLD_MICRO_USD = 782;
+/** Chat timeout for a reasoning completion. The 1s mock timeout is too short for a live call. */
+export const LIVE_CHAT_TIMEOUT_MS = 30_000;
+/** Generation-cost lookup: six attempts, 2s starting delay, factor 2, cap 8s, 10s per attempt. */
+export const LIVE_COST_RETRIES = 6;
+export const LIVE_COST_DELAY_MS = 2_000;
+export const LIVE_COST_BACKOFF = 2;
+export const LIVE_COST_MAX_DELAY_MS = 8_000;
+export const LIVE_COST_TIMEOUT_MS = 10_000;
+/** Bounded wait between the first and last cost lookup, excluding request time. */
+export const LIVE_COST_MAX_WAIT_MS = 2_000 + 4_000 + 8_000 + 8_000 + 8_000;
 
 export type TraceStep = 'claim' | 'reserve' | 'model' | 'tool' | 'artifact' | 'settlement' | 'receipt';
 
@@ -118,7 +128,44 @@ async function releaseOpen(db: Database, reservationId: string, reason: string):
     WHERE reservation_id=? AND state='open'`).bind(reason, reservationId).all();
 }
 
+async function replayed(db: Database, input: RunInput): Promise<RunReport | null> {
+  const row = await db.prepare(`SELECT run_id, attempt_id, state, failure, generation_id, reservation_id, artifact_id, receipt_id, trace_json
+    FROM execution_runs WHERE run_id=?`).bind(input.run_id).first<{
+    run_id: string; attempt_id: string; state: string; failure: string | null;
+    generation_id: string | null; reservation_id: string | null; artifact_id: string | null;
+    receipt_id: string | null; trace_json: string;
+  }>();
+  if (!row) return null;
+  const terminal = row.generation_id !== null || row.state === 'settled' || row.state === 'unknown'
+    || row.state === 'canceled' || row.state === 'rejected';
+  if (!terminal) return null;
+  if (row.attempt_id !== input.attempt_id) {
+    return {
+      state: 'rejected', failure: 'run_id_conflict', disposition: 'FAIL',
+      generation_id: row.generation_id, reservation_id: row.reservation_id, artifact_id: row.artifact_id,
+      receipt_id: row.receipt_id ?? '', trace: [], fetches: 0,
+    };
+  }
+  let disposition: RunReport['disposition'] = 'FAIL';
+  if (row.receipt_id) {
+    const stored = await db.prepare('SELECT disposition FROM execution_receipts WHERE receipt_id=?')
+      .bind(row.receipt_id).first<{ disposition: RunReport['disposition'] }>();
+    if (stored?.disposition) disposition = stored.disposition;
+  } else if (row.state === 'settled') disposition = 'PASS';
+  else if (row.state === 'unknown') disposition = 'UNKNOWN';
+  else if (row.state === 'canceled') disposition = 'CANCELED';
+  let trace: TraceEvent[] = [];
+  try { trace = JSON.parse(row.trace_json) as TraceEvent[]; } catch { /* keep empty */ }
+  return {
+    state: row.state, failure: row.failure, disposition,
+    generation_id: row.generation_id, reservation_id: row.reservation_id, artifact_id: row.artifact_id,
+    receipt_id: row.receipt_id ?? '', trace, fetches: 0,
+  };
+}
+
 export async function superviseRun(db: Database, input: RunInput): Promise<RunReport> {
+  const prior = await replayed(db, input);
+  if (prior) return prior;
   let fetches = 0;
   const fetchImpl: FetchLike = async (target, init) => {
     fetches += 1;
@@ -193,7 +240,7 @@ export async function superviseRun(db: Database, input: RunInput): Promise<RunRe
   let text = '';
   try {
     const chat = await chatOnce({
-      model: input.model, prompt: input.prompt, maxTokens: input.max_tokens, timeoutMs: 1_000,
+      model: input.model, prompt: input.prompt, maxTokens: input.max_tokens, timeoutMs: LIVE_CHAT_TIMEOUT_MS,
       fetchImpl, apiKey: input.api_key,
     });
     ids.generation_id = chat.generation_id;
@@ -210,7 +257,9 @@ export async function superviseRun(db: Database, input: RunInput): Promise<RunRe
   await input.after?.('model');
   const canceled = await cancelGeneration(db, input.task_id) !== input.cancel_generation;
   const cost = await getGenerationCost(ids.generation_id ?? '', {
-    fetchImpl, apiKey: input.api_key, retries: 1, delayMs: 0, timeoutMs: 1_000,
+    fetchImpl, apiKey: input.api_key,
+      retries: LIVE_COST_RETRIES, delayMs: LIVE_COST_DELAY_MS, timeoutMs: LIVE_COST_TIMEOUT_MS,
+      backoffFactor: LIVE_COST_BACKOFF, maxDelayMs: LIVE_COST_MAX_DELAY_MS,
   });
   const actual: SettleInput | null = cost ? {
     generation_id: ids.generation_id ?? '', micro_usd: cost.micro_usd, cost_field: cost.cost_field,
