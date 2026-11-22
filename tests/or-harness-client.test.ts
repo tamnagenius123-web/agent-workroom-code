@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import {
-  chatOnce, dispatch, loadRoster, OpenRouterError, type Ledger,
+  chatOnce, dispatch, getGenerationCost, loadRoster, OpenRouterError, type Ledger,
 } from '../src/or-harness/client.ts';
 
 const MODEL = 'z-ai/glm-5.3-flash';
@@ -94,4 +94,24 @@ test('the build receipt names this source and the dispatch provider module', () 
   assert.equal(receipt.decision_chat_once, 'src/decision/llm-fallback.ts');
   const bundle = readFileSync('dist/worker.mjs', 'utf8');
   assert.equal(bundle.includes(CHAT), true);
+});
+
+test('generation cost lookup retries 404s with backoff and then returns the cost', async () => {
+  let gets = 0;
+  const fetchImpl = async () => {
+    gets += 1;
+    if (gets < 3) return new Response(null, { status: 404 });
+    return Response.json({
+      data: { id: 'gen-retry', total_cost: 0.000018, tokens_prompt: 4, tokens_completion: 8, provider_name: 'mock', model: MODEL },
+    });
+  };
+  const started = Date.now();
+  const cost = await getGenerationCost('gen-retry', {
+    fetchImpl, apiKey: 'test-key', retries: 3, delayMs: 20, timeoutMs: 1000, backoffFactor: 2, maxDelayMs: 80,
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(cost?.micro_usd, 18);
+  assert.equal(cost?.cost_field, 'total_cost');
+  assert.equal(gets, 3);
+  assert.ok(elapsed >= 60, 'expected 20ms then 40ms backoff, got ' + elapsed);
 });

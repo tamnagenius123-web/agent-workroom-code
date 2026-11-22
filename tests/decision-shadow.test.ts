@@ -47,6 +47,7 @@ test('a task claim path is the only shadow trigger', () => {
   assert.equal(claimUnitId('https://oauth.test/api/v1/rooms/room_main/tasks/unit-1/claim', 'POST'), 'unit-1');
   assert.equal(claimUnitId('https://oauth.test/api/v1/rooms/room_main/tasks/unit-1/claim', 'GET'), null);
   assert.equal(claimUnitId('https://oauth.test/api/v1/me', 'POST'), null);
+  assert.equal(claimUnitId('https://oauth.test/api/v1/rooms/room_main/execution-runs', 'POST'), null);
 });
 
 test('a missing judgments table does not throw and does not apply', async () => {

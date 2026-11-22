@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from '../scripts/local-harness.ts';
 import { estimateMicroUsd, loadRoster, reservationMicroUsd, type SettleInput } from '../src/or-harness/client.ts';
-import { LIVE_MAX_HOLD_MICRO_USD, LIVE_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, LIVE_MODEL, VERIFIER, settleAgain, superviseRun } from '../src/server/run-supervisor.ts';
+import { LIVE_COST_MAX_WAIT_MS, LIVE_COST_RETRIES, LIVE_MAX_HOLD_MICRO_USD, LIVE_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, LIVE_MODEL, VERIFIER, settleAgain, superviseRun } from '../src/server/run-supervisor.ts';
+import { claimUnitId } from '../src/server/decision-shadow.ts';
 import type { Database } from '../src/server/db.ts';
 
 const CHAT = 'https://openrouter.ai/api/v1/chat/completions';
@@ -42,9 +43,17 @@ async function base(db: Database) {
     VALUES (4,'north','do the one job',NULL,'dir_g1','user:minsung','hash-g1','2026-11-22T00:00:00.000Z')`).all();
 }
 
-test('the live bound holds at most 225 micro-USD', () => {
+test('the live bound holds 782 micro-USD for 1024 completion tokens', () => {
   const estimate = estimateMicroUsd(LIVE_MODEL, LIVE_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, loadRoster());
+  assert.equal(LIVE_MAX_TOKENS, 1024);
   assert.equal(reservationMicroUsd(estimate), LIVE_MAX_HOLD_MICRO_USD);
+  assert.equal(LIVE_MAX_HOLD_MICRO_USD, 782);
+});
+
+test('the cost lookup waits between 30 and 60 seconds across retries', () => {
+  assert.equal(LIVE_COST_RETRIES, 6);
+  assert.ok(LIVE_COST_MAX_WAIT_MS >= 30_000);
+  assert.ok(LIVE_COST_MAX_WAIT_MS <= 60_000);
 });
 
 test('one mock attempt keeps the same ids, and the counterexamples stay visible', async () => {
@@ -138,5 +147,105 @@ test('one mock attempt keeps the same ids, and the counterexamples stay visible'
     assert.equal(stale.fetches, 0);
     const staleCount = await db.prepare('SELECT COUNT(*) AS n FROM budget_reservations WHERE attempt_id=?').bind('run-stale-a1').first<{ n: number }>();
     assert.equal(staleCount?.n, 0);
+  } finally { await app.close(); }
+});
+
+test('a late generation cost is retried, and a second superviseRun does not post again', async () => {
+  const app = await harness({ through: 81, seed: true });
+  try {
+    const db = app.db;
+    await base(db);
+    await seed(db, 'task_retry', 3);
+    let posts = 0;
+    let gets = 0;
+    const lateFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? 'GET';
+      if (method === 'POST' && url === CHAT) {
+        posts += 1;
+        return Response.json({ id: 'gen-late', choices: [{ message: { content: 'hello from model' } }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
+      }
+      if (method === 'GET' && url.startsWith(GENERATION)) {
+        gets += 1;
+        if (gets === 1) return new Response(null, { status: 404 });
+        return Response.json({ data: { id: 'gen-late', total_cost: 0.000021, tokens_prompt: 4, tokens_completion: 2, provider_name: 'mock', model: LIVE_MODEL } });
+      }
+      throw new Error('unexpected ' + method + ' ' + url);
+    };
+    const common = {
+      project: 'g1', principal: PRINCIPAL, lease_epoch: 3, intent_revision: 4, cancel_generation: 0,
+      model: LIVE_MODEL, prompt: 'Reply with hello', max_tokens: LIVE_MAX_TOKENS, api_key: KEY, cap_micro_usd: 3_000_000,
+      task_id: 'task_retry', run_id: 'run-retry', attempt_id: 'run-retry-a1', fetch: lateFetch,
+    };
+    const first = await superviseRun(db, common);
+    assert.equal(first.disposition, 'PASS');
+    assert.equal(first.fetches, 3);
+    assert.equal(posts, 1);
+    assert.equal(gets, 2);
+    const again = await superviseRun(db, common);
+    assert.equal(again.disposition, 'PASS');
+    assert.equal(again.fetches, 0);
+    assert.equal(again.receipt_id, first.receipt_id);
+    assert.equal(posts, 1);
+    assert.equal(gets, 2);
+  } finally { await app.close(); }
+});
+
+test('POST /execution-runs is authenticated, settles one mock job, and is not a claim path', async () => {
+  const calls: { url: string; method: string }[] = [];
+  const outboundService = async (request: Request) => {
+    calls.push({ url: request.url, method: request.method });
+    if (request.method === 'POST' && request.url === CHAT) {
+      return Response.json({ id: 'gen-route', choices: [{ message: { content: 'hello from model' } }], usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 } });
+    }
+    if (request.method === 'GET' && request.url.startsWith(GENERATION)) {
+      return Response.json({ data: { id: 'gen-route', total_cost: 0.000021, tokens_prompt: 4, tokens_completion: 2, provider_name: 'mock', model: LIVE_MODEL } });
+    }
+    return new Response('outbound blocked', { status: 599 });
+  };
+  const app = await harness({ through: 81, seed: true, bindings: { OPENROUTER_API_KEY: KEY }, outboundService });
+  try {
+    await base(app.db);
+    await seed(app.db, 'task_route', 3);
+    assert.equal(claimUnitId('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', 'POST'), null);
+    const unauth = await app.mf.dispatchFetch('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_version: '1', task_id: 'task_route', run_id: 'run-route', attempt_id: 'run-route-a1', lease_epoch: 3, intent_revision: 4, prompt: 'Reply with hello' }),
+    });
+    assert.equal(unauth.status, 401);
+    const reader = await app.mf.dispatchFetch('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer local-reader-fixture', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_version: '1', task_id: 'task_route', run_id: 'run-route', attempt_id: 'run-route-a1', lease_epoch: 3, intent_revision: 4, prompt: 'Reply with hello' }),
+    });
+    assert.equal(reader.status, 403);
+    const leaked = await app.mf.dispatchFetch('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer local-alpha-fixture', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_version: '1', task_id: 'task_route', run_id: 'run-route', attempt_id: 'run-route-a1', lease_epoch: 3, intent_revision: 4, prompt: 'Reply with hello', api_key: KEY }),
+    });
+    assert.equal(leaked.status, 400);
+    const ok = await app.mf.dispatchFetch('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer local-alpha-fixture', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_version: '1', task_id: 'task_route', run_id: 'run-route', attempt_id: 'run-route-a1', lease_epoch: 3, intent_revision: 4, prompt: 'Reply with hello' }),
+    });
+    const body = await ok.json() as { ok: boolean; data: { disposition: string; fetches: number; receipt_id: string }; error?: { code: string } };
+    assert.equal(ok.status, 200, JSON.stringify(body));
+    assert.equal(body.data.disposition, 'PASS', JSON.stringify(body));
+    assert.equal(body.data.fetches, 2);
+    assert.equal(JSON.stringify(body).includes(KEY), false);
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
+    const replay = await app.mf.dispatchFetch('http://127.0.0.1/api/v1/rooms/room_main/execution-runs', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer local-alpha-fixture', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema_version: '1', task_id: 'task_route', run_id: 'run-route', attempt_id: 'run-route-a1', lease_epoch: 3, intent_revision: 4, prompt: 'Reply with hello' }),
+    });
+    const replayed = await replay.json() as { ok: boolean; data: { disposition: string; fetches: number; receipt_id: string } };
+    assert.equal(replay.status, 200, JSON.stringify(replayed));
+    assert.equal(replayed.data.disposition, 'PASS');
+    assert.equal(replayed.data.fetches, 0);
+    assert.equal(replayed.data.receipt_id, body.data.receipt_id);
+    assert.equal(calls.filter(call => call.method === 'POST').length, 1);
   } finally { await app.close(); }
 });

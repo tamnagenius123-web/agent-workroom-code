@@ -374,6 +374,8 @@ export async function getGenerationCost(id: string, options: {
   retries?: number;
   delayMs?: number;
   timeoutMs?: number;
+  backoffFactor?: number;
+  maxDelayMs?: number;
 }): Promise<GenerationCost | null> {
   const key = usableKey(options.apiKey);
   if (!key) throw new OpenRouterError('missing_api_key', { retryable: false });
@@ -381,11 +383,20 @@ export async function getGenerationCost(id: string, options: {
   const attempts = options.retries ?? DEFAULT_COST_RETRIES;
   const delayMs = options.delayMs ?? DEFAULT_COST_DELAY_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_CHAT_TIMEOUT_MS;
+  const backoffFactor = options.backoffFactor ?? 1;
+  const maxDelayMs = options.maxDelayMs;
   if (!Number.isInteger(attempts) || attempts < 1) throw new OpenRouterError('bad_retries', { retryable: false });
   if (!Number.isFinite(delayMs) || delayMs < 0) throw new OpenRouterError('bad_delay', { retryable: false });
+  if (!Number.isFinite(backoffFactor) || backoffFactor < 1) throw new OpenRouterError('bad_backoff', { retryable: false });
+  if (maxDelayMs !== undefined && (!Number.isFinite(maxDelayMs) || maxDelayMs < 0)) throw new OpenRouterError('bad_delay', { retryable: false });
   const url = `${GENERATION_URL}?id=${encodeURIComponent(id)}`;
   let sawMissing = false;
   let lastError: OpenRouterError | null = null;
+  let waitMs = delayMs;
+  const pause = async () => {
+    await sleep(waitMs);
+    waitMs = maxDelayMs === undefined ? waitMs * backoffFactor : Math.min(maxDelayMs, waitMs * backoffFactor);
+  };
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     const controller = new AbortController();
@@ -396,13 +407,13 @@ export async function getGenerationCost(id: string, options: {
         response = await options.fetchImpl(url, { method: 'GET', headers: authHeaders(key, false), signal: controller.signal });
       } catch (error) {
         lastError = isAbort(error) ? new OpenRouterError('timeout', { retryable: true }) : new OpenRouterError('transport', { retryable: true });
-        if (attempt < attempts) { await sleep(delayMs); continue; }
+        if (attempt < attempts) { await pause(); continue; }
         break;
       }
       const body = await readJson(response);
       if (response.status === 404 || response.status === 204) {
         sawMissing = true;
-        if (attempt < attempts) { await sleep(delayMs); continue; }
+        if (attempt < attempts) { await pause(); continue; }
         break;
       }
       if (response.status >= 400 && response.status < 500) {
@@ -410,7 +421,7 @@ export async function getGenerationCost(id: string, options: {
       }
       if (!response.ok) {
         lastError = new OpenRouterError(`http_${response.status}`, { status: response.status, retryable: true });
-        if (attempt < attempts) { await sleep(delayMs); continue; }
+        if (attempt < attempts) { await pause(); continue; }
         break;
       }
       const record = generationRecord(body);
@@ -418,7 +429,7 @@ export async function getGenerationCost(id: string, options: {
       const usage = record ? presentUsd(record.usage) : undefined;
       if (total === undefined && usage === undefined) {
         sawMissing = true;
-        if (attempt < attempts) { await sleep(delayMs); continue; }
+        if (attempt < attempts) { await pause(); continue; }
         break;
       }
       const chosen = total !== undefined ? { usd: total, cost_field: 'total_cost' as const } : { usd: usage as number, cost_field: 'usage' as const };
