@@ -1,49 +1,60 @@
 name: ci
 on:
   pull_request:
-    # Tip 3 (D5-cv): docs-only changes do not trigger ci. ci.yml only —
-    # policy.yml intentionally carries no paths filter (policy must always run).
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
 permissions:
   contents: read
+# CI-HYGIENE: a workflow+ref group still drops a queued main run. Pull
+# requests share one group per ref and cancel the older run. A push to
+# main uses the commit sha, so a later push neither cancels it nor
+# replaces one that is still queued.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Council C-H1: a main (integration) run is never cancelled by the next push;
-  # superseded PR runs may be. Tip 2 (D5-cv): cancel superseded in-progress
-  # runs on every ref except main itself.
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   TEST_CONCURRENCY: '4'
   TEST_FILE_TIMEOUT_MS: '300000'
 jobs:
-  # `pr` is the required pull_request check. It does not run on a push to main,
-  # so that push shows the job as skipped. That is by design. A main push runs
-  # `gate` (static checks) and `test-shard` (the full suite, sharded). Those
-  # job names are not required checks and do not block merges.
-  # cancel-in-progress stays off for refs/heads/main.
-  # A docs-only change skips the test step by condition instead of skipping
-  # the job, so a required check never sits pending.
-  pr:
-    if: github.event_name == 'pull_request'
+  # Classifies the diff. Heavy jobs read `product`. There is no workflow
+  # paths filter: a skipped workflow would not report the required `pr` check.
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
+    outputs:
+      product: ${{ steps.filter.outputs.product }}
     steps:
-      # Full history: test-select diffs against the merge-base of the base branch.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - id: filter
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: node scripts/ci/changed-paths.mjs
+  # `pr` is the required pull_request check. It runs on every pull request,
+  # including a docs-only diff, so the check reports instead of sitting
+  # skipped. A docs-only diff skips install, build, typecheck, lint, and
+  # tests. Any other diff runs the affected set in this one job. It does
+  # not run on a push to main. A main push runs `gate` and `test-shard`
+  # when the push is a product change. Those names are not required checks.
+  pr:
+    if: always() && !cancelled() && github.event_name == 'pull_request'
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: path filter must succeed
+        if: needs.changes.result != 'success'
+        run: exit 1
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
           cache: npm
-      # Base branch tip vs this checkout. Same helper the policy job runs from check.mjs.
       - name: stale merge-gate wording lint (docs/OWNER_RULINGS.md)
         run: node scripts/ci/stale-phrases.mjs
       - name: migration number lint
@@ -54,9 +65,11 @@ jobs:
           ref="${GITHUB_BASE_REF:-main}"
           git fetch --no-tags --depth=1 origin "+refs/heads/${ref}:refs/remotes/origin/${ref}"
           node scripts/ci/mig-num-lint.mjs "refs/remotes/origin/${ref}" HEAD
-      - run: npm ci
+      - name: install
+        if: needs.changes.outputs.product == 'true'
+        run: npm ci
       - name: select affected tests
-        id: select
+        if: needs.changes.outputs.product == 'true'
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
@@ -66,19 +79,11 @@ jobs:
           git diff --name-only "$mb" HEAD > changed.txt
           node scripts/test-select.mjs --base "$base" --list > selected.txt 2> select.log
           cat select.log
-          docs_only=true
-          while IFS= read -r f; do
-            case "$f" in
-              docs/*|reports/*|*.md) ;;
-              *) docs_only=false ;;
-            esac
-          done < changed.txt
           {
             echo "## test selection (D5-cl: affected set is the default)"
             echo "- changed files: $(wc -l < changed.txt)"
             echo "- selected test files: $(wc -l < selected.txt) of $(ls tests/*.test.ts | wc -l)"
             echo "- wide expansion (shared surface): $(grep -c 'WIDE' select.log || true) trigger(s)"
-            echo "- docs-only: ${docs_only}"
             echo ""
             echo "### changed"
             sed 's/^/- /' changed.txt
@@ -86,9 +91,11 @@ jobs:
             echo "### selection log"
             sed 's/^/- /' select.log
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "docs_only=${docs_only}" >> "$GITHUB_OUTPUT"
-      - run: npm run build
+      - name: build
+        if: needs.changes.outputs.product == 'true'
+        run: npm run build
       - name: tsbuildinfo cache
+        if: needs.changes.outputs.product == 'true'
         uses: actions/cache@v4
         with:
           # The declaration outputs (.cache/tsc) must be cached together with
@@ -100,32 +107,33 @@ jobs:
             .cache/tsc
           key: tsbuildinfo2-${{ runner.os }}-${{ hashFiles('tsconfig*.json', 'package-lock.json') }}
           restore-keys: tsbuildinfo2-${{ runner.os }}-
-      # Scoped build-mode typecheck (D5-cl (2)); the tsbuildinfo cache above is
-      # what makes tsc -b cheaper than a full tsc --noEmit on repeat runs.
-      - run: npx tsc -b
+      - name: typecheck
+        if: needs.changes.outputs.product == 'true'
+        run: npx tsc -b
       - name: eslint cache
+        if: needs.changes.outputs.product == 'true'
         uses: actions/cache@v4
         with:
           path: .cache/eslintcache
           key: eslint-${{ runner.os }}-${{ hashFiles('eslint.config.mjs', 'package-lock.json') }}
           restore-keys: eslint-${{ runner.os }}-
-      - run: npm run lint
+      - name: lint
+        if: needs.changes.outputs.product == 'true'
+        run: npm run lint
       - name: run affected tests
-        if: steps.select.outputs.docs_only != 'true'
+        if: needs.changes.outputs.product == 'true'
         timeout-minutes: 15
         env:
-          # claude-runner defaults to /workspace paths on the box; point it at scratch dirs so the test is hermetic.
           CLAUDE_AGENT_DIR: ${{ runner.temp }}/claude-agent
           WORKROOM_GW: ${{ runner.temp }}/grok-workroom
           CLAUDE_WT: ${{ runner.temp }}/claude-wt
         run: node scripts/test-select.mjs --base origin/${{ github.base_ref }}
-      - name: docs-only change
-        if: steps.select.outputs.docs_only == 'true'
-        run: echo "docs-only change - test execution skipped by step condition; lints, build, typecheck and lint above still ran. Selection evidence is in the job summary."
   # Push to main is the integration point: static gates once, then the full
-  # suite sharded across parallel jobs (D5-cl (3)).
+  # suite sharded across parallel jobs (D5-cl (3)). A docs-only push skips
+  # both. The pull request job above is the only affected-set run.
   gate:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.changes.outputs.product == 'true'
+    needs: [changes]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -149,10 +157,6 @@ jobs:
       - name: tsbuildinfo cache
         uses: actions/cache@v4
         with:
-          # The declaration outputs (.cache/tsc) must be cached together with
-          # the buildinfo: buildinfo alone makes tsc -b trust outputs that are
-          # not on disk and every referencing project fails TS6305 (proven on
-          # run 41306059492; key bumped to start from a consistent cache).
           path: |
             .cache/tsbuildinfo
             .cache/tsc
@@ -167,7 +171,8 @@ jobs:
           restore-keys: eslint-${{ runner.os }}-
       - run: npm run lint
   plan:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && needs.changes.outputs.product == 'true'
+    needs: [changes]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -187,8 +192,8 @@ jobs:
         id: plan
         run: node scripts/ci/plan-shards.mjs
   test-shard:
-    if: github.event_name == 'push'
-    needs: [gate, plan]
+    if: github.event_name == 'push' && needs.changes.outputs.product == 'true'
+    needs: [gate, plan, changes]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -217,8 +222,8 @@ jobs:
           path: .cache/test-timings.json
           if-no-files-found: ignore
   timings:
-    if: always() && github.event_name == 'push'
-    needs: [test-shard]
+    if: always() && !cancelled() && github.event_name == 'push' && needs.changes.outputs.product == 'true'
+    needs: [test-shard, changes]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
