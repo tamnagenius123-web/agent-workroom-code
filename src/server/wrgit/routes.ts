@@ -3,7 +3,6 @@ import { Fault } from '../contracts.ts';
 import type { Env } from '../db.ts';
 import type { WrgitClaim } from '../tasks.ts';
 import type { ArtifactsBinding } from './artifacts-binding.ts';
-import { mergeTask, submitWorkspace } from './merge.ts';
 import { ensureWorkspace, openWorkspace, pendingHeldTask, pendingMarkerStatement, prepareWrgit, readWorkspace } from './workspaces.ts';
 
 const workspaceBody = z.object({ task_id: z.string().min(1).max(128) }).strict();
@@ -36,14 +35,6 @@ export async function wrgitRoute(env: Env, artifacts: ArtifactsBinding | undefin
   throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);
 }
 
-const submitSchema = z.object({
-  sha: z.string().regex(/^[0-9a-f]{40}$/),
-}).strict();
-const mergeSchema = z.object({
-  task_id: z.string().min(1).max(128),
-  receipt_id: z.string().min(1).max(128),
-}).strict();
-
 const SUBMIT = /^\/git\/workspaces\/([^/]+)\/submit$/;
 
 export async function gitRoute(
@@ -54,6 +45,8 @@ export async function gitRoute(
   principal: string,
   readJSON: () => Promise<unknown>,
 ): Promise<{ data: unknown; meta: Record<string, never> } | null> {
+  void principal;
+  void readJSON;
   const submit = SUBMIT.exec(url.pathname);
   const isMerge = url.pathname === '/git/merge';
   if (!submit && !isMerge) return null;
@@ -61,14 +54,5 @@ export async function gitRoute(
   if (request.method !== 'POST') throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);
   if (url.search) throw new Fault('INVALID_INPUT', 'Query parameters are unsupported.');
   if (!artifacts) throw new Fault('UNAVAILABLE', 'Artifacts binding is not configured.', 503);
-  const body = await readJSON();
-  if (submit) {
-    let workspaceId = submit[1] ?? '';
-    try { workspaceId = decodeURIComponent(workspaceId); }
-    catch { throw new Fault('INVALID_INPUT', 'Workspace id is not valid.'); }
-    const input = submitSchema.parse(body);
-    return { data: await submitWorkspace(env.DB, artifacts, principal, workspaceId, input.sha), meta: {} };
-  }
-  const input = mergeSchema.parse(body);
-  return { data: await mergeTask(env.DB, artifacts, principal, input.task_id, input.receipt_id), meta: {} };
+  throw new Fault('UNAVAILABLE', 'WR-GIT merge is served by the gate MCP repo.', 503);
 }

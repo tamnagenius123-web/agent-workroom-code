@@ -528,12 +528,13 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
       await revoke('alpha', 1);
 
       const ok = await call(env, `/git/workspaces/${repo}/submit`, { body: { sha: HEAD_SHA } });
-      assert.equal(ok.status, 200, ok.text);
+      assert.equal(ok.status, 503, ok.text);
+      assert.equal(ok.json.error?.code, 'UNAVAILABLE');
       await revoke('beta', 0);
       const merged = await call(env, '/git/merge', { body: { task_id: task.id, receipt_id: 'rcpt-canpost' }, token: 'local-beta-fixture' });
       assert.equal(merged.status, 403, merged.text);
       assert.equal(merged.json.error?.code, 'FORBIDDEN');
-      assert.equal((await rowsFor(task.id))[0]?.status, 'submitted');
+      assert.equal((await rowsFor(task.id))[0]?.status, 'open');
       assert.equal(await boot.db.prepare('SELECT 1 FROM wrgit_merges WHERE task_id=?').bind(task.id).first(), null);
     } finally {
       await revoke('alpha', 1);
@@ -680,9 +681,8 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
     assert.equal(opened.text.includes('art_test_'), false);
   });
 
-  // Documented gap (docs/specs/wrgit-open-contract.md): once open has returned a token, the
-  // lease is not rechecked by submit. This test pins what the code does today.
-  test('after open returns, an expired lease does not block submit (documented gap)', async () => {
+  // Submit is fail-closed in this repo. An expired lease still blocks a second open.
+  test('after open returns, submit fails closed and an expired lease blocks reopen', async () => {
     const artifacts = new MemoryArtifacts();
     const env = envFor(artifacts, true);
     const task = await createTask(env);
@@ -695,7 +695,8 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
     const reopen = await call(env, '/git/workspaces', { body: { task_id: task.id } });
     assert.equal(reopen.status, 403, reopen.text);
     const submitted = await call(env, `/git/workspaces/${repo}/submit`, { body: { sha: HEAD_SHA } });
-    assert.equal(submitted.status, 200, submitted.text);
+    assert.equal(submitted.status, 503, submitted.text);
+    assert.equal(submitted.json.error?.code, 'UNAVAILABLE');
   });
 
   test('open mints the write token with an explicit bounded ttl', async () => {
@@ -1254,12 +1255,12 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
 
       const env = { DB: db, WRGIT_ENABLED: '1', ARTIFACTS: artifacts } as unknown as Env;
       const submitted = await call(env, `/git/workspaces/${left.id}/submit`, { body: { sha: BASE_SHA } });
-      assert.equal(submitted.status, 200, submitted.text);
+      assert.equal(submitted.status, 503, submitted.text);
+      assert.equal(submitted.json.error?.code, 'UNAVAILABLE');
       await storePass(db, 'rcpt-miss', miss.id, BASE_SHA);
       const merged = await call(env, '/git/merge', { body: { task_id: miss.id, receipt_id: 'rcpt-miss' }, token: 'local-beta-fixture' });
       assert.equal(merged.status, 503, merged.text);
-      assert.equal(merged.json.error?.code, 'NOT_READY');
-      assert.match(merged.json.error?.message ?? '', /merge fields are missing/);
+      assert.equal(merged.json.error?.code, 'UNAVAILABLE');
       const recorded = await db.prepare('SELECT sha FROM wrgit_merges WHERE task_id=?').bind(miss.id).first();
       assert.equal(recorded, null);
       assert.equal(logs.some(line => line.includes('art_test_')), false);
@@ -1304,11 +1305,12 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
       artifacts.addRepo(forged, BASE_SHA);
       const env = { DB: db, WRGIT_ENABLED: '1', ARTIFACTS: artifacts } as unknown as Env;
       const submitted = await call(env, `/git/workspaces/${forged}/submit`, { body: { sha: BASE_SHA } });
-      assert.equal(submitted.status, 200, submitted.text);
+      assert.equal(submitted.status, 503, submitted.text);
+      assert.equal(submitted.json.error?.code, 'UNAVAILABLE');
       await storePass(db, 'rcpt-forged', task.id, BASE_SHA);
       const merged = await call(env, '/git/merge', { body: { task_id: task.id, receipt_id: 'rcpt-forged' }, token: 'local-beta-fixture' });
       assert.equal(merged.status, 503, merged.text);
-      assert.equal(merged.json.error?.code, 'NOT_READY');
+      assert.equal(merged.json.error?.code, 'UNAVAILABLE');
 
       const reopened = await openOn(db, artifacts, task.id);
       assert.equal(reopened.status, 503, reopened.text);
