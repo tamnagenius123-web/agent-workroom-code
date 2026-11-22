@@ -5,6 +5,7 @@ import { ConnectionAuthority, type Assertion } from '../connection/authority.ts'
 import { endpoint } from '../connection/policy.ts';
 import { verifyPassword, needsRehash, hashPassword } from './password.ts';
 import { b64url, fromB64url, hmac, random, sha256, same } from './crypto.ts';
+import { headerBearer, isAgentToken, queryCarriesWrk, readAgentCredential } from './agent-credential.ts';
 
 export interface G5Env extends Env {
   WORKROOM_RESOURCE?: string; WORKROOM_INGRESS_ID?: string; OWNER_PASSWORD_HASH?: string;
@@ -359,15 +360,24 @@ export async function g5Routes(request: Request, env: G5Env): Promise<Response |
 
 // ---- Resource authentication through the G4 authority ----
 export async function g5Authenticate(request: Request, env: G5Env): Promise<Identity> {
+  if (queryCarriesWrk(request.url)) throw new Fault('UNAUTHENTICATED', 'Connection identity could not be verified.', 401);
+  const presented = headerBearer(request.headers.get('authorization'));
   const c = config(env);
+  if (presented && isAgentToken(presented)) {
+    if (!c) throw closed();
+    if (new URL(request.url).origin !== c.issuer) throw new Fault('FORBIDDEN', 'Connection origin denied.', 403);
+    const row = await readAgentCredential(env.DB, presented, Date.now());
+    if (!row) throw new Fault('UNAUTHENTICATED', 'Connection identity could not be verified.', 401);
+    return { principal: row.principal_id, write: row.scopes.includes('workroom.write') };
+  }
   if (!c) throw closed();
   const db = env.DB;
   let tokenScopes: string[] = [], clientId: string | null = null;
   const authority = new ConnectionAuthority(db, {
     resource: c.resource, ingress_id: c.ingress, issuers: [c.issuer],
     verifier: async input => {
-      const bearer = input.headers.get('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{20,200})$/)?.[1];
-      if (!bearer) return null;
+      const bearer = headerBearer(input.headers.get('authorization'));
+      if (!bearer || isAgentToken(bearer)) return null;
       const t = await db.prepare("SELECT * FROM oauth_tokens WHERE token_hash=? AND kind='access'").bind(await hmac(c.pepper, 'token:' + bearer)).first<Token>();
       const now = Date.now();
       if (!t || t.revoked_at !== null || t.expires_at <= now || t.aud !== c.resource) return null;
