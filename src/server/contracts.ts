@@ -98,6 +98,27 @@ export function metadata(): Meta {
   return { request_id: crypto.randomUUID(), schema_version: VERSION, server_time: new Date().toISOString() };
 }
 export { unitCostRecordSchema, unitCostSummarySchema, agentDispatchSchema } from './dispatch-wire.ts';
+// Telegram bridge product glue. Formatting and TUI copy only.
+// Webhook, auth, receipts, and the owner session stay fail-closed in this repo.
+export {
+  BRIDGE_STORAGE_NOT_READY, PINNED_WORKER, PREVIEW_CHARS, SINK_PRINCIPAL, TEXT_LIMIT, TOPIC_CAP, PACE,
+  buildCardParts, digestLine, isCountedActor, mirrorAllowed, mirrorPayloads, nextSendAt, ownerDecisionText,
+  paceAllowsSend, planTopic, recordedLine, redactSecrets, retryAfterDelayMs, selectedRooms, shortErrorCode,
+  telegramUpdateKeys, toSendBody, topicName,
+} from '../telegram/format.ts';
+export type {
+  MirrorFilter, MirrorInput, OutboxDestination, OutboxPayload, TelegramSendBody, TelegramUpdateKeys, TopicPlan,
+} from '../telegram/format.ts';
+export {
+  ALLOWLISTED_COMMANDS, BOT_COMMANDS, DENIED_TEXT, WRITE_COMMANDS,
+  canonicalCommand, commandSendBody, emptyCopy, foldsPage, helpPage, historyPage, isAllowlistedCommand,
+  loadPage, menuKeyboard, menuPage, recentPage, searchPage, threadPage, unknownCommandPage, usageLine,
+  usagePage, wakeProofPage, whoamiPage,
+} from '../telegram/copy.ts';
+export type {
+  AllowlistedCommand, BotCommand, FoldRow, HistoryRow, PageCursor, RecentRow, SearchHit, TelegramButton,
+  TelegramPage, WakeProofView, WhoamiFacts,
+} from '../telegram/copy.ts';
 export function failure(e: unknown, meta: Meta): { body: Failure; status: number } {
   const f = e instanceof Fault ? e : e instanceof z.ZodError
     ? new Fault('INVALID_INPUT', 'Input does not match the G1 schema.')
