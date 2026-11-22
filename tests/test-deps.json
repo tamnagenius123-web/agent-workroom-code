@@ -21,7 +21,8 @@
     "tsconfig.base.json",
     "tsconfig.src.json",
     "tsconfig.tests.json",
-    "tsconfig.scripts.json"
+    "tsconfig.scripts.json",
+    "tests/test-deps.json"
   ],
   "ignore": [
     "docs/",
@@ -34,13 +35,17 @@
     "scripts/browser-",
     "scripts/dev.ts",
     "scripts/test-select.mjs",
-    "tests/test-exclusive.json",
-    "tests/test-deps.json"
+    "tests/test-exclusive.json"
   ],
   "smoke": [
     "tests/contracts.test.ts",
     "tests/migration-order.test.ts",
     "tests/files-http.test.ts",
     "tests/fold-mcp.test.ts"
-  ]
+  ],
+  "runtime": {
+    "tests/deploy-pinned.test.ts": [
+      "scripts/deploy-pinned.sh"
+    ]
+  }
 }

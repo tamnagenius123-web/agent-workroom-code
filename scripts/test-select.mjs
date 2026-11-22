@@ -53,12 +53,31 @@ for (const f of codeFiles) {
   deps.set(f, d);
 }
 
+// Explicit non-import dependencies are data, never executable inputs. Keep
+// missing targets: deleting a runtime script must still select its consumers.
+const runtime = overrides.runtime === undefined ? {} : overrides.runtime;
+if (runtime === null || typeof runtime !== 'object' || Array.isArray(runtime)) throw new Error('invalid runtime dependency mapping');
+const repoPath = (p) => typeof p === 'string' && p.length > 0 && !p.includes('\\') && !/[\u0000-\u001f\u007f]/.test(p)
+  && !p.split('/').some((part) => !part || part === '.' || part === '..');
+const runtimeTargets = new Set();
+for (const [owner, targets] of Object.entries(runtime)) {
+  if (!repoPath(owner) || !deps.has(owner)) throw new Error(`invalid runtime dependency owner: ${owner}`);
+  if (!Array.isArray(targets) || targets.some((p) => !repoPath(p))) throw new Error(`invalid runtime dependency targets: ${owner}`);
+  for (const target of targets) { deps.get(owner).add(target); runtimeTargets.add(target); }
+}
+
 const reaches = new Map();
-function closure(f, seen = new Set()) {
+function closure(f) {
   if (reaches.has(f)) return reaches.get(f);
-  seen.add(f);
-  const out = new Set([f]);
-  for (const d of deps.get(f) || []) { out.add(d); if (!seen.has(d) && deps.has(d)) for (const x of closure(d, seen)) out.add(x); }
+  // Cache only a completed root traversal. Partially cached DFS results can
+  // lose dependencies for another consumer when imports contain a cycle.
+  const out = new Set(); const pending = [f];
+  while (pending.length) {
+    const next = pending.pop();
+    if (out.has(next)) continue;
+    out.add(next);
+    for (const d of deps.get(next) || []) if (!out.has(d)) pending.push(d);
+  }
   reaches.set(f, out);
   return out;
 }
@@ -88,6 +107,9 @@ function select(changed) {
       tests.forEach((t) => add(t, c + ' (shared surface: wide set forced)'));
       continue;
     }
+    // A declared runtime dependency is stronger evidence than an ordinary
+    // ignore rule (for example, a JSON runtime fixture under docs/).
+    if (runtimeTargets.has(c)) for (const [t, r] of testReach) if (r.has(c)) add(t, c);
     if (overrides.ignore.some((p) => c === p || c.startsWith(p))) continue;
     if (overrides.everything.includes(c)) { tests.forEach((t) => add(t, c + ' (toolchain: affects every test)')); continue; }
     for (const [t, r] of testReach) if (r.has(c)) add(t, c);
