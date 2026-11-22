@@ -1,0 +1,4 @@
+{
+  "inserted": false,
+  "reason": "OAuth client rows are provisioned in the gate MCP repo. This drive does not write a client."
+}
