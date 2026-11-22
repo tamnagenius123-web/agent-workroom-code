@@ -21,8 +21,9 @@ test('wrangler.jsonc binds ARTIFACTS to the workroom namespace and ships WR-GIT 
 
 test('deploy-pinned.sh runs an exact Wrangler version that supports Artifacts', () => {
   const script = readFileSync(new URL('../scripts/deploy-pinned.sh', import.meta.url), 'utf8');
+  assert.equal(script.includes('migrations apply'), false);
   const calls = [...script.matchAll(/npx(?: --yes)? wrangler(@\S+)?/g)];
-  assert.ok(calls.length >= 3, 'deploy-pinned.sh calls wrangler');
+  assert.ok(calls.length >= 2, 'deploy-pinned.sh calls wrangler');
   for (const [call, pin] of calls) {
     const v = /^@(\d+)\.(\d+)\.(\d+)$/.exec(pin ?? '');
     assert.ok(v, `unpinned wrangler call: ${call}`);

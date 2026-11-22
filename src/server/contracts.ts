@@ -99,7 +99,8 @@ export function metadata(): Meta {
 }
 export { unitCostRecordSchema, unitCostSummarySchema, agentDispatchSchema } from './dispatch-wire.ts';
 // Telegram bridge product glue. Formatting and TUI copy only.
-// Webhook, auth, receipts, and the owner session stay fail-closed in this repo.
+// Webhook, receipts, and the owner session stay fail-closed in this repo.
+// Hosted OAuth is src/auth/g5.ts. It closes with AUTH_NOT_CONFIGURED until the worker secrets are set.
 export {
   BRIDGE_STORAGE_NOT_READY, PINNED_WORKER, PREVIEW_CHARS, SINK_PRINCIPAL, TEXT_LIMIT, TOPIC_CAP, PACE,
   buildCardParts, digestLine, isCountedActor, mirrorAllowed, mirrorPayloads, nextSendAt, ownerDecisionText,
