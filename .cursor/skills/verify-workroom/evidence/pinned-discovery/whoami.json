@@ -1,0 +1,6 @@
+{
+  "path": "/mcp",
+  "tool": "workroom_whoami",
+  "status": 503,
+  "code": "AUTH_NOT_CONFIGURED"
+}

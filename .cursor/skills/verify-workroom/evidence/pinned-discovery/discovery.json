@@ -1,0 +1,5 @@
+{
+  "path": "/.well-known/oauth-authorization-server",
+  "status": 503,
+  "code": "AUTH_NOT_CONFIGURED"
+}

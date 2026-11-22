@@ -1,0 +1,5 @@
+GET /.well-known/oauth-authorization-server -> 503 AUTH_NOT_CONFIGURED
+GET /oauth/authorize -> 503 AUTH_NOT_CONFIGURED
+POST /mcp workroom_whoami -> 503 AUTH_NOT_CONFIGURED
+POST /git/merge -> 503 AUTH_NOT_CONFIGURED
+no client row inserted; no token issued
