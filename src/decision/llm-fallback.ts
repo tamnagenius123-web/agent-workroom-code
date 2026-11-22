@@ -1,6 +1,6 @@
 // Chat fallback used by decide() when a decision-model call does not land.
-// The shared or-harness client in this repo stays fail-closed. These helpers are the
-// calls decide() already makes: a roster estimate, one chat POST, and a generation-cost GET.
+// These helpers are not the dispatch provider in src/or-harness/client.ts.
+// They estimate from the bundled roster, send one chat POST, and GET a generation cost.
 // They do not reserve, settle, or dispatch.
 
 import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };

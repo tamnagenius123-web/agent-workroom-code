@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };
 import {
-  dispatch, estimateMicroUsd,
+  dispatch, estimateMicroUsd, OpenRouterError,
   type DispatchReport, type FetchLike, type Ledger, type PendingMark, type ReserveInput, type Roster, type SettleInput,
 } from '../or-harness/client.ts';
 import type { Database, Value } from './db.ts';
@@ -515,6 +515,7 @@ export async function dispatchWithGate(service: Workroom, env: DispatchEnv, inpu
     if (!held) await db.prepare('DELETE FROM dispatch_calls WHERE id = ? AND result_json IS NULL').bind(freshId).all();
     const closed = boundaryFault(error);
     if (closed) throw closed;
+    if (error instanceof OpenRouterError && error.reason === 'missing_api_key') throw notConfigured();
     throw error;
   }
   const payload = JSON.stringify(storedReport(report));

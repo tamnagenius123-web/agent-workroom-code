@@ -273,7 +273,7 @@ test('missing budget tables are a clean not-available fault', async () => {
   } finally { await app.close(); }
 });
 
-test('the default gate stub fails the dispatch before any provider call', async () => {
+test('a configured dispatch calls the mock provider once and settles', async () => {
   const network = scriptedOutbound();
   const app = await harness({
     through: 9999,
@@ -281,21 +281,22 @@ test('the default gate stub fails the dispatch before any provider call', async 
     outboundService: network.outboundService,
   });
   try {
-    const response = await Promise.race([
-      rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-closed-001', {
-        schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
-      }),
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => reject(new Error('boundary error did not fail the dispatch within 1s')), 1_000);
-      }),
-    ]);
-    assert.equal(response.status, 503);
-    assert.equal(response.body.error?.code, 'NOT_AVAILABLE');
-    assert.equal((response.body.error as { retryable?: boolean } | undefined)?.retryable, false);
-    assert.match(response.body.error?.message ?? '', /boundary unavailable/);
-    assert.equal(network.calls.length, 0);
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM dispatch_calls').first<{ n: number }>())?.n), 0);
-    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM budget_reservations').first<{ n: number }>())?.n), 0);
+    const response = await rest(app, ALPHA, 'POST', '/api/v1/rooms/room_main/dispatch', 'dispatch-live-0001', {
+      schema_version: '1', model: MODEL, prompt: 'Reply with hello', max_tokens: 32,
+    });
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.data.state, 'settled');
+    assert.equal(response.body.data.text, 'hello from model');
+    assert.equal(response.body.data.micro_usd, 21);
+    assert.equal(network.calls.length, 2);
+    assert.equal(network.calls[0]?.method, 'POST');
+    assert.equal(network.calls[0]?.url, CHAT);
+    assert.equal(network.calls[0]?.authOk, true);
+    assert.equal(network.calls[1]?.method, 'GET');
+    assert.equal(network.calls.filter(call => call.method === 'POST').length, 1);
+    assert.equal(JSON.stringify(response.body).includes('boundary unavailable'), false);
+    assert.equal(Number((await app.db.prepare('SELECT count(*) AS n FROM dispatch_calls').first<{ n: number }>())?.n), 1);
+    assert.equal(Number((await app.db.prepare("SELECT count(*) AS n FROM budget_reservations WHERE state='settled'").first<{ n: number }>())?.n), 1);
   } finally { await app.close(); }
 });
 
