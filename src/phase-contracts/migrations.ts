@@ -37,6 +37,7 @@ export const MIGRATION_REGISTRY = {
   '0077': { unit: 'ORCH-A1 unit lease/claim (0077_unit_leases.sql, owner t995u)', status: 'used' },
   '0078': { unit: 'Decision-layer judgments (0078_judgments.sql, shadow-only)', status: 'used' },
   '0079': { unit: 'Enrollment agent credentials (0079_agent_credentials.sql)', status: 'used' },
+  '0080': { unit: 'G1 execution run envelope (0080_g1_execution_runs.sql)', status: 'used' },
 } as const;
 export type ReservedMigration = keyof typeof MIGRATION_REGISTRY;
 

@@ -10,7 +10,7 @@ The original 0027 collision: grok/p0-fix reserved 0027 while main already shippe
 
 D1 applies migration files in numeric order. Used numbers land in this order:
 
-merge_order: 0027 0028 0029 0030 0031 0035 0044 0045 0052 0053 0054 0055 0057 0060 0061 0062 0063 0068 0071 0072 0073 0074 0075 0077 0078 0079
+merge_order: 0027 0028 0029 0030 0031 0035 0044 0045 0052 0053 0054 0055 0057 0060 0061 0062 0063 0068 0071 0072 0073 0074 0075 0077 0078 0079 0080
 
 ## Reservations
 
@@ -52,5 +52,6 @@ merge_order: 0027 0028 0029 0030 0031 0035 0044 0045 0052 0053 0054 0055 0057 00
 | 0077 | ORCH-A1 unit lease/claim (0077_unit_leases.sql, owner t995u) | used |
 | 0078 | Decision-layer judgments (0078_judgments.sql, shadow-only) | used |
 | 0079 | Enrollment agent credentials (0079_agent_credentials.sql) | used |
+| 0080 | G1 execution run envelope (0080_g1_execution_runs.sql) | used |
 
 Grok Bot assigned 0044 to IW-01. 0041, 0042, and 0043 belong to `grok/t2b-destination` @ 10c1cb4. 0045 (`0045_owner_directives.sql`, from `grok/owner-ui-api` 08d3b2a) is now used: grok/mem-layer ported the file. The 0041–0043 SQL files are not in this worktree, so those rows stay `reserved`: the number is held, and this branch must not add a file under it. On t2b, 0041–0043 are `used` because the files exist there. A merge flips these rows to `used` by bringing those files in, not by writing new SQL. grok/batch-a moved I1 from 0049 to 0054 and H3 from 0053_decisions.sql to 0055 because 0052 and 0053 are already applied on main. 0049 stays reserved so the number is not reused. 0052_bot_aliases.sql and 0053_claude_alias.sql are unchanged. 0061 is WG-2's wrgit index. 0062 adds the public remote and the pending-fork marker for WG-3. 0063 adds submit and merge columns on that index. 0064 is reserved and has no SQL file: the canonical_repo and unit backfill moved to 0068, and this number is not reused. 0068 fills canonical_repo and unit only when id and repo equal the SHA-256 of the length-prefixed task and agent, after 0063. 0071 stores the canonical head a fast-forward compared against and settles an intent as merged or not merged. 0072 records the merge lock generation checked at the canonical ref update. 0073 stores write_open_at as the start of the canonical-write lease and fence_ok after Artifacts compare-and-set or a D1 generation recheck that still matched. 0074 stores the write-open lease owner and one lease row per winning generation compare-and-set. 0075 renames canonical_repo values that 0068 backfilled as main/agent-workroom to agent-workroom, the WG-11 native repo name. Apply order is 0063, then 0068, then 0071, then 0072, then 0073, then 0074, then 0075. WG-3 ships only together with or after WG-5.
