@@ -1,0 +1,71 @@
+{
+  "contract": "AP-WR-LEAN-41-20261122-r1",
+  "toolchain": "Lean (version 4.19.0, x86_64-unknown-linux-gnu, commit 6caaee842e94, Release)",
+  "mathlib": "none for Workroom package",
+  "clean_requested": true,
+  "build": {
+    "command": [
+      "lake",
+      "build"
+    ],
+    "started_utc": "2026-11-22T10:46:56.445534+00:00",
+    "duration_seconds": 5.067,
+    "exit_code": 0,
+    "log": "evidence/lean-build.log",
+    "log_sha256": "c6d66d3ee6f72a1c4324daa4e7bb101b75c7dd1a52bd59f5a188bceceeae8360"
+  },
+  "axiom_audit": {
+    "command": [
+      "lake",
+      "env",
+      "lean",
+      "Workroom/AxiomAudit.lean"
+    ],
+    "started_utc": "2026-11-22T10:47:01.522427+00:00",
+    "duration_seconds": 1.05,
+    "exit_code": 0,
+    "log": "evidence/axiom-audit.log",
+    "log_sha256": "2e36c738bf4e765a69c608d3675837ed5b601d9df42488c8ed891850a765f6d5"
+  },
+  "theorems_audited": 206,
+  "allowed_axioms": [
+    "Classical.choice",
+    "Quot.sound",
+    "propext"
+  ],
+  "unexpected_axioms": [],
+  "fresh_kernel_recheck": {
+    "command": [
+      "lake",
+      "env",
+      "/workspace/scratch/ac5ab6eaf4e1/tooling/lean4checker/.lake/build/bin/lean4checker",
+      "--fresh",
+      "Workroom.All"
+    ],
+    "started_utc": "2026-11-22T10:47:02.613782+00:00",
+    "duration_seconds": 115.889,
+    "exit_code": 0,
+    "log": "evidence/kernel-fresh.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "source_files": {
+    "Workroom/AdversarialReview.lean": "36b1df8f9072d643794ce1bb523f1ace89c7626dec362a1fc348682a0e4ee975",
+    "Workroom/All.lean": "63c029a929567d11aa8d9a2073507e535687d54ea11beabf1226073564c2e871",
+    "Workroom/Authority.lean": "685e2aa07e7233e0d8dafb4a5d181359f290d84c9c46cd9415cf4f3882f92517",
+    "Workroom/AxiomAudit.lean": "fdb749ca90a1b87dfbef2846eae8319249d06c9815d026a8038bb0bd4e7343a6",
+    "Workroom/Budget.lean": "860a05930d527b36d9d01a28e25e0e17618e4a24c23a461df40c7851bd4acf2c",
+    "Workroom/Concurrency.lean": "9b79d36292b75905a6cca809e36582faeaf5296f170479bd8c5d2e21af30af74",
+    "Workroom/Context.lean": "f08abeee95ec31922e6d4addc872ce69866bed8c1ba0aa1bec1989cc10dd78f3",
+    "Workroom/Decidable.lean": "750b740dbd3a961b33cb71e667bacc43f523751214b3ba9b22f634aa638370ed",
+    "Workroom/Effects.lean": "df904b01caa06355e240dc2f5361c7791954e1ccc68b48cbfe2ee031738ecbd7",
+    "Workroom/Goal.lean": "d9e94892d8a608892684a665453aa3e06e2613a455fe39148014ccb123cede4c",
+    "Workroom/Memory.lean": "bd90efef22f6bc52ecd402de7c7ab84bb8701a0d966cd792e53edcb29195e4cb",
+    "Workroom/RSI.lean": "36a25c9fd5ec68cf619bca4f1ce60f91b4d69502afd0d29c53680404257f5075",
+    "Workroom/Refinement.lean": "80113adf5a993b518f777a652df773c84279c03f884300ae2d18bbf039835bd6",
+    "Workroom/Repository.lean": "9f13c1618e9b696aa6ba64c5518e16ea28ae45a472784c3ad9610d5bdc5b978c",
+    "Workroom/Spec.lean": "17ab4c83c7c61a54dfd367cea6c54168a60b86cda0db686a90d8571448ac2a51",
+    "Workroom/Verification.lean": "af95e9d7e4f79d201a793a23f7c7f841476fcb9bc0dd290a14ca5cd18a2a2bfd"
+  },
+  "scope": "Formal reference modules and explicit countermodels only; no production refinement certification",
+  "checker_is_external_kernel": false
+}
