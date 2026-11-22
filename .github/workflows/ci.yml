@@ -23,9 +23,13 @@ env:
   TEST_CONCURRENCY: '4'
   TEST_FILE_TIMEOUT_MS: '300000'
 jobs:
-  # PR: affected tests only (D5-cl (1)). The job always runs; a docs-only
-  # change skips the test step by condition instead of skipping the job, so a
-  # required check never sits pending.
+  # `pr` is the required pull_request check. It does not run on a push to main,
+  # so that push shows the job as skipped. That is by design. A main push runs
+  # `gate` (static checks) and `test-shard` (the full suite, sharded). Those
+  # job names are not required checks and do not block merges.
+  # cancel-in-progress stays off for refs/heads/main.
+  # A docs-only change skips the test step by condition instead of skipping
+  # the job, so a required check never sits pending.
   pr:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
