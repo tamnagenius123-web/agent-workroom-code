@@ -12,8 +12,9 @@ const workerdNodeStub = {
       'node:fs': 'export function readFileSync(){throw new Error("node:fs is unused on the worker dispatch path")}',
       'node:path': 'export function dirname(p){const t=String(p);const i=t.lastIndexOf("/");return i<=0?".":t.slice(0,i)}export function join(...a){return a.map(p=>String(p)).join("/")}',
       'node:url': 'export function fileURLToPath(u){return typeof u==="string"?u:String(u)}',
+      'node:buffer': 'export const Buffer={from(input,encoding){if(encoding!=="base64")throw new Error("unsupported buffer encoding");const binary=atob(String(input));const out=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)out[i]=binary.charCodeAt(i);return out}};',
     };
-    b.onResolve({ filter: /^node:(fs|path|url)$/ }, args => ({ path: args.path, namespace: 'workerd-node-stub' }));
+    b.onResolve({ filter: /^node:(fs|path|url|buffer)$/ }, args => ({ path: args.path, namespace: 'workerd-node-stub' }));
     b.onLoad({ filter: /.*/, namespace: 'workerd-node-stub' }, args => ({ contents: files[args.path] ?? 'export {}', loader: 'js' }));
   },
 };

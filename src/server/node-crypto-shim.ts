@@ -61,6 +61,10 @@ function toHex(bytes: Uint8Array): string {
   return out;
 }
 
+export function randomUUID(): string {
+  return crypto.randomUUID();
+}
+
 export function createHash(algorithm: string) {
   if (algorithm !== 'sha256') throw new Error('unsupported hash ' + algorithm);
   const chunks: Uint8Array[] = [];
