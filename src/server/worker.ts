@@ -8,6 +8,7 @@ import { Workroom } from './domain.ts';
 import { ROOM, postSchema } from './contracts.ts';
 import { telegramWebhook, type TelegramEnv } from './telegram.ts';
 import { g5Authenticate, g5Capabilities, g5Routes, wwwAuthenticate, type G5Env } from '../auth/g5.ts';
+import { claimUnitId, shadowClaim, type ShadowEnv } from './decision-shadow.ts';
 
 // Production: G5 hosted OAuth through the G4 authority. Missing configuration => 503 AUTH_NOT_CONFIGURED.
 // Owner intent writes run before G5. An agent bearer token never reaches them.
@@ -23,6 +24,8 @@ interface Ctx { waitUntil(p: Promise<unknown>): void }
 export default { async scheduled(_e: unknown, env: Env, ctx: Ctx) { ctx.waitUntil(deliver(env.DB, undefined, wakeAuthFrom(env))); ctx.waitUntil(expireFiles(env.DB, env.FILES ?? null, Date.now()).catch(() => undefined)); if (new Date().getUTCMinutes() === 7) ctx.waitUntil(retainBookkeeping(env.DB, Date.now(), (env as { RETENTION_MODE?: string }).RETENTION_MODE === 'delete' ? 'delete' : 'dry_run')); },
   async fetch(request: Request, env: Env, ctx: Ctx): Promise<Response> {
   const response = await app.fetch(request, env, ctx);
+  const unit = response.ok ? claimUnitId(request.url, request.method) : null;
+  if (unit) ctx.waitUntil(shadowClaim(env as ShadowEnv, unit).catch(() => undefined));
   if (response.status !== 401) return response;
   const challenge = wwwAuthenticate(env as G5Env);
   if (!challenge) return response;

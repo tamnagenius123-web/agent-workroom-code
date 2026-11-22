@@ -903,7 +903,7 @@ test('a jev size-route error does not retry on d1', async () => {
   assert.equal(result.routing_reason, 'size_over_d1_ultra');
 });
 
-test('decision code does not read the environment or the global fetch, and current flows do not import it', () => {
+test('decision code does not read the environment or the global fetch, and only the shadow worker imports it', () => {
   function walk(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
       const path = join(dir, name);
@@ -918,8 +918,16 @@ test('decision code does not read the environment or the global fetch, and curre
     assert.equal(text.includes('process.env'), false, file);
   }
   assert.equal(readFileSync('src/decision/sweep.ts', 'utf8').includes('openrouter'), false);
+  assert.equal(readFileSync('src/decision/llm-fallback.ts', 'utf8').includes('node:fs'), false);
+  assert.equal(readFileSync('src/decision/config.ts', 'utf8').includes('DECISION_LIVE_ENABLED = false'), true);
+  const shadowPath = join('src', 'server', 'decision-shadow.ts');
   for (const file of walk('src')) {
     if (file.includes(`${sep}decision${sep}`)) continue;
+    if (file === shadowPath) continue;
     assert.equal(readFileSync(file, 'utf8').includes('/decision/'), false, file);
   }
+  const shadow = readFileSync(shadowPath, 'utf8');
+  assert.equal(shadow.includes("mode: 'shadow'"), true);
+  assert.equal(shadow.includes('live: false'), true);
+  assert.equal(shadow.includes("mode: 'live'"), false);
 });

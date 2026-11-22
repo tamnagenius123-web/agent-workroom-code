@@ -3,13 +3,12 @@
 // calls decide() already makes: a roster estimate, one chat POST, and a generation-cost GET.
 // They do not reserve, settle, or dispatch.
 
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };
 
-const ROSTER_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../config/models.openrouter.json');
-const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
+/** Bundled roster. Workers have no filesystem, so this is the only roster loadRoster serves. */
+export const ROSTER_PATH = 'config/models.openrouter.json';
+export const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
 const MIN_HEADROOM_MICRO = 200;
 
 export interface RosterModel {
@@ -69,17 +68,12 @@ export class OpenRouterError extends Error {
   }
 }
 
-let rosterCache: { path: string; roster: Roster } | null = null;
+const bundledRoster: Roster = rosterJson as Roster;
 
 export function loadRoster(path = ROSTER_PATH): Roster {
-  if (rosterCache?.path === path) return rosterCache.roster;
-  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Roster).models)) {
-    throw new Error('invalid roster');
-  }
-  const roster = parsed as Roster;
-  rosterCache = { path, roster };
-  return roster;
+  if (path !== ROSTER_PATH) throw new Error('roster path is not bundled');
+  if (!bundledRoster || !Array.isArray(bundledRoster.models)) throw new Error('invalid roster');
+  return bundledRoster;
 }
 
 function requireModel(model: string, roster = loadRoster()): RosterModel {

@@ -7,7 +7,7 @@
 // fails closed with BoundaryUnavailableError. Phase 2 replaces these seams
 // with calls to the gate MCP server. Hosted OAuth is implemented in
 // src/auth/g5.ts. Other gate and harness seams still fail closed.
-// The decision layer records shadow judgments and is not on the request path.
+// The decision layer records shadow judgments from the worker and does not change the response.
 
 export class BoundaryUnavailableError extends Error {
   readonly code = 'BOUNDARY_UNAVAILABLE' as const;

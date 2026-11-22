@@ -62,4 +62,6 @@ No mounted path from `8089647` is absent in this build.
 
 ## Decision layer
 
-`src/decision` is not on the request path in this commit. `DECISION_LIVE_ENABLED` is false. Wiring it in shadow mode is the next commit.
+`DECISION_LIVE_ENABLED` stays false. A successful `POST /api/v1/rooms/:room/tasks/:id/claim` schedules a shadow `t2.rebalance` judgment after the response is built. The verdict is not applied to the claim. The judgment is inserted when `judgments` exists. A missing table is ignored. The general-model roster is the bundled `config/models.openrouter.json`, so the `z-ai/glm-5.3` fallback does not read `node:fs`.
+
+Routing is unchanged: `liquid/d1.2-ultra` under 65,536 tokens, `typesafe/jev-1.14` under 262,144, then `z-ai/glm-5.3`, then the deterministic rule. Decider is not called. When `OPENROUTER_API_KEY` is unset, the shadow row is the rule fallback and no provider call is made. When the key is set and the budget tables exist, the shadow call can spend on that claim. The claim response itself does not change.

@@ -69,6 +69,26 @@ export function createD1JudgmentStore(db: Database): JudgmentStore {
   return { insert: row => insertJudgment(db, row) };
 }
 
+export function missingJudgmentsTable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : '';
+  return `${message} ${cause}`.toLowerCase().includes('no such table');
+}
+
+/** Writes a judgment when 0078 is present. A missing table is not an error. */
+export function createTolerantJudgmentStore(db: Database): JudgmentStore {
+  return {
+    async insert(row) {
+      try {
+        await insertJudgment(db, row);
+      } catch (error) {
+        if (missingJudgmentsTable(error)) return;
+        throw error;
+      }
+    },
+  };
+}
+
 export async function insertJudgment(db: Database, row: JudgmentRow): Promise<void> {
   const sql = `INSERT INTO judgments (${JUDGMENT_COLUMNS.join(', ')}) VALUES (${JUDGMENT_COLUMNS.map(() => '?').join(', ')})`;
   await db.prepare(sql).bind(...rowValues(row)).all();
