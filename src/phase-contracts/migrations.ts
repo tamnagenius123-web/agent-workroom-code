@@ -36,6 +36,7 @@ export const MIGRATION_REGISTRY = {
   '0075': { unit: 'WG-11 rename wrgit canonical_repo main/agent-workroom to agent-workroom (0075_wrgit_canonical_rename.sql, claude/wg-11-config)', status: 'used' },
   '0077': { unit: 'ORCH-A1 unit lease/claim (0077_unit_leases.sql, owner t995u)', status: 'used' },
   '0078': { unit: 'Decision-layer judgments (0078_judgments.sql, shadow-only)', status: 'used' },
+  '0079': { unit: 'Enrollment agent credentials (0079_agent_credentials.sql)', status: 'used' },
 } as const;
 export type ReservedMigration = keyof typeof MIGRATION_REGISTRY;
 
