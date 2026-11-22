@@ -6,6 +6,6 @@ for a in "$@"; do case "$a" in --env|--env=*|-e) echo "REFUSED: --env is forbidd
 grep -q '"name": "agent-workroom-main"' wrangler.jsonc || { echo "REFUSED: wrangler.jsonc top-level name is not agent-workroom-main" >&2; exit 65; }
 grep -q '"env"[[:space:]]*:' wrangler.jsonc && { echo "REFUSED: wrangler.jsonc must not define env sections" >&2; exit 66; }
 npx --yes wrangler@4.152.0 d1 time-travel info agent-workroom-test
-npx --yes wrangler@4.152.0 d1 migrations apply agent-workroom-test --remote
+echo "NOTE: this script does not apply D1 migrations. Apply migrations/0077_unit_leases.sql and migrations/0078_judgments.sql with wrangler d1 execute agent-workroom-test --remote --file=... before deploy." >&2
 npm run build
 npx --yes wrangler@4.152.0 deploy "$@"
