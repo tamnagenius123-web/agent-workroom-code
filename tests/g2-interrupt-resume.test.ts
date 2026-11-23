@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from '../scripts/local-harness.ts';
-import type { SettleInput } from '../src/or-harness/client.ts';
+import { estimateMicroUsd, reservationMicroUsd, type SettleInput } from '../src/or-harness/client.ts';
 import { claimUnitId } from '../src/server/decision-shadow.ts';
 import type { Database } from '../src/server/db.ts';
+import { openD1Ledger } from '../src/server/dispatch-wire.ts';
 import {
   getRunStatus, heartbeatRun, interruptRun, LIVE_MAX_TOKENS, LIVE_MODEL,
   resumeRun, settleAgain, superviseRun, type RunInput,
@@ -597,5 +598,160 @@ test('G2 HTTP routes (/interrupt, /heartbeat, /resume, GET /:run_id) enforce aut
     const hbDone = await heartbeatRun(app.db, { task_id: 't_http2', run_id: 'run-http2', attempt_id: 'run-http2-a2', principal: PRINCIPAL, lease_epoch: 3, intent_revision: 4, cancel_generation: 0 });
     assert.equal(hbDone.alive, false);
     assert.equal(hbDone.failure, 'terminal_settled');
+  } finally { await app.close(); }
+});
+
+test('G1 replay and G2 late-cost resume preserve one attempt, hold, artifact, and receipt', async () => {
+  const app = await harness({ through: 82, seed: true });
+  try {
+    const db = app.db;
+    await seedBase(db);
+    await seedTask(db, 't_seam', 3, PRINCIPAL, 120_000);
+
+    const initial = makeMockFetch({ genId: 'gen-seam', content: 'Synthetic checkpoint', costStatus: 404 });
+    const late = makeMockFetch({ genId: 'gen-seam' });
+    const input = baseInput('t_seam', 'run-seam', 'attempt-seam', initial.fetch);
+    const estimate = estimateMicroUsd(input.model, input.prompt.length, input.max_tokens);
+    const hold = reservationMicroUsd(estimate);
+    const otherHold = 40;
+    input.cap_micro_usd = hold + otherHold;
+    const ledger = openD1Ledger(db, PRINCIPAL, input.cap_micro_usd);
+
+    const otherInput = {
+      project: 'g2-other-fixture', run_id: 'run-other-fixture', attempt_id: 'attempt-other-fixture',
+      model: LIVE_MODEL, est_micro_usd: otherHold,
+      pricing_snapshot: {
+        model: LIVE_MODEL, snapshot_utc: '2026-01-01T00:00:00Z', source: 'synthetic',
+        price_usd_per_token: { prompt: '0', completion: '0' },
+        prompt_chars: 0, prompt_tokens_est: 0, max_tokens: 0,
+        estimate_micro_usd: otherHold, reserved_micro_usd: otherHold,
+      },
+    };
+    const other = await ledger.reserve(otherInput);
+    assert.ok(other.ok);
+    const otherReservation = () => db.prepare('SELECT * FROM budget_reservations WHERE reservation_id=?')
+      .bind(other.reservation_id).first();
+    const otherBefore = await otherReservation();
+    assert.ok(otherBefore);
+
+    const pending = await superviseRun(db, {
+      ...input,
+      after: async step => {
+        if (step !== 'reserve') return;
+        // Replay only once the original hold and checkpoint are durable.
+        const replies = await Promise.all([superviseRun(db, input), superviseRun(db, input)]);
+        for (const replay of replies) {
+          assert.equal(replay.disposition, 'FAIL');
+          assert.equal(replay.failure, 'run_id_conflict');
+          assert.equal(replay.fetches, 0);
+        }
+        assert.deepEqual(initial.stats, { posts: 0, gets: 0 });
+      },
+    });
+    assert.deepEqual(initial.stats, { posts: 1, gets: 1 });
+    assert.equal(pending.state, 'unknown');
+    assert.equal(pending.failure, 'cost_unknown');
+    assert.equal(pending.disposition, 'UNKNOWN');
+    assert.ok(pending.reservation_id && pending.artifact_id && pending.receipt_id);
+    const reservationId = pending.reservation_id;
+
+    const receiptRows = async () => (await db.prepare(
+      'SELECT receipt_id, task_id, run_id, attempt_id, generation_id, lease_epoch, artifact_id, disposition, detail '
+      + 'FROM execution_receipts WHERE run_id=?',
+    ).bind(input.run_id).all()).results;
+    const checkpoint = () => db.prepare(
+      'SELECT task_id, run_id, attempt_id, model_text, tool_digest FROM execution_checkpoints WHERE run_id=?',
+    ).bind(input.run_id)
+      .first<{ task_id: string; run_id: string; attempt_id: string; model_text: string; tool_digest: string }>();
+    const reservationRows = async () => (await db.prepare(
+      'SELECT reservation_id, project, attempt_id, state, micro_usd, generation_id FROM budget_reservations WHERE run_id=?',
+    ).bind(input.run_id).all()).results;
+    const actualRows = async () => (await db.prepare(
+      'SELECT reservation_id, project, generation_id, micro_usd, cost_field FROM budget_actuals WHERE project IN (?,?)',
+    ).bind(input.project, otherInput.project).all()).results;
+    const receiptSeed = {
+      receipt_id: pending.receipt_id, task_id: input.task_id, run_id: input.run_id,
+      attempt_id: input.attempt_id, generation_id: 'gen-seam', lease_epoch: 3, artifact_id: pending.artifact_id,
+    };
+    const checkpointBefore = await checkpoint();
+    assert.ok(checkpointBefore);
+    assert.equal(checkpointBefore.task_id, input.task_id);
+    assert.equal(checkpointBefore.run_id, input.run_id);
+    assert.equal(checkpointBefore.attempt_id, input.attempt_id);
+    assert.equal(checkpointBefore.model_text, 'Synthetic checkpoint');
+    const artifact = await db.prepare('SELECT text FROM messages WHERE id=?')
+      .bind(pending.artifact_id).first<{ text: string }>();
+    const expectedDigest = Buffer.from(await crypto.subtle.digest('SHA-256',
+      new TextEncoder().encode('Synthetic checkpoint'))).toString('base64url');
+    assert.equal(checkpointBefore.tool_digest, expectedDigest);
+    assert.equal(artifact?.text, expectedDigest);
+    assert.deepEqual(await receiptRows(), [{ ...receiptSeed, disposition: 'UNKNOWN', detail: 'cost_unknown' }]);
+    const reservation = {
+      reservation_id: reservationId, project: input.project, attempt_id: input.attempt_id,
+      micro_usd: hold, generation_id: 'gen-seam',
+    };
+    assert.deepEqual(await reservationRows(), [{ ...reservation, state: 'pending_actual' }]);
+    assert.deepEqual(await actualRows(), []);
+    assert.deepEqual(await ledger.summary(input.project), {
+      cap: input.cap_micro_usd, held: input.cap_micro_usd, spent: 0, remaining: 0,
+    });
+    assert.deepEqual(await ledger.reserve({ ...otherInput, run_id: 'run-over-cap', attempt_id: 'attempt-over-cap' }), {
+      ok: false, reason: 'over_budget', remaining: 0,
+    });
+    assert.deepEqual(await superviseRun(db, input), { ...pending, fetches: 0 });
+
+    await db.prepare('UPDATE task_leases SET lease_epoch=4, expires_at_ms=? WHERE task_id=?')
+      .bind(Date.now() + 120_000, input.task_id).all();
+    const resumed = await resumeRun(db, { ...input, lease_epoch: 4, fetch: late.fetch });
+    assert.equal(resumed.state, 'settled');
+    assert.equal(resumed.disposition, 'PASS');
+    assert.equal(resumed.failure, null);
+    assert.equal(resumed.reservation_id, reservationId);
+    assert.equal(resumed.generation_id, pending.generation_id);
+    assert.equal(resumed.artifact_id, pending.artifact_id);
+    assert.equal(resumed.receipt_id, pending.receipt_id);
+    assert.deepEqual(await checkpoint(), checkpointBefore);
+    const status = await getRunStatus(db, input.run_id);
+    assert.equal(status?.task_id, input.task_id);
+    assert.equal(status?.run_id, input.run_id);
+    assert.equal(status?.attempt_id, input.attempt_id);
+    assert.equal(status?.checkpoint_step, 'settled');
+    assert.equal(status?.resumed_count, 1);
+    assert.equal(status?.reservation_state, 'settled');
+    assert.equal(status?.actual_micro_usd, 28);
+
+    const actual: SettleInput = {
+      generation_id: 'gen-seam', micro_usd: 28, cost_field: 'total_cost',
+      provider_account: 'Wafer', model: LIVE_MODEL + '-20260826',
+      tokens: { prompt: 8, completion: 137, total: 145, reasoning: 100, content: 12, native_prompt: 18, native_completion: 112 },
+    };
+    const expectedReceipt = [{ ...receiptSeed, disposition: 'PASS', detail: 'late_cost_settled' }];
+    const expectedActuals = [{
+      reservation_id: reservationId, project: input.project, generation_id: actual.generation_id,
+      micro_usd: actual.micro_usd, cost_field: actual.cost_field,
+    }];
+    assert.deepEqual(await receiptRows(), expectedReceipt);
+    assert.deepEqual(await actualRows(), expectedActuals);
+
+    const repeats = await Promise.all([
+      settleAgain(db, PRINCIPAL, input.cap_micro_usd, reservationId, actual),
+      settleAgain(db, PRINCIPAL, input.cap_micro_usd, reservationId, actual),
+    ]);
+    assert.deepEqual(repeats, Array.from({ length: 2 }, () => ({
+      updated_run: false, state: 'settled', disposition: 'PASS',
+    })));
+    await assert.rejects(
+      () => settleAgain(db, PRINCIPAL, input.cap_micro_usd, reservationId, { ...actual, micro_usd: 29 }),
+      /invalid_state/,
+    );
+    assert.deepEqual(await receiptRows(), expectedReceipt);
+    assert.deepEqual(await actualRows(), expectedActuals);
+    assert.deepEqual(await reservationRows(), [{ ...reservation, state: 'settled' }]);
+    assert.deepEqual(await otherReservation(), otherBefore);
+    assert.deepEqual(await ledger.summary(input.project), {
+      cap: input.cap_micro_usd, held: otherHold, spent: 28, remaining: hold - 28,
+    });
+    assert.deepEqual(initial.stats, { posts: 1, gets: 1 });
+    assert.deepEqual(late.stats, { posts: 0, gets: 1 });
   } finally { await app.close(); }
 });
