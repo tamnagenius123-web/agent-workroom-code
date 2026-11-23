@@ -61,6 +61,7 @@ async function callMcp(
 test('checkWebhookUrl rejects insecure, private, IP-literal, and self-worker hosts', () => {
   assert.equal(checkWebhookUrl('https://hooks.example.test/workroom'), 'https://hooks.example.test/workroom');
   assert.equal(checkWebhookUrl('https://hooks.example.test:443/path?a=1'), 'https://hooks.example.test/path?a=1');
+  assert.equal(checkWebhookUrl('https://agent-workroom-dots-wake.example.workers.dev/wake'), 'https://agent-workroom-dots-wake.example.workers.dev/wake');
   for (const bad of [
     'not-a-url',
     'http://hooks.example.test/hook',
@@ -73,6 +74,7 @@ test('checkWebhookUrl rejects insecure, private, IP-literal, and self-worker hos
     'https://service.internal/hook',
     'https://metadata.google.internal/hook',
     'https://agent-workroom-main.example.workers.dev/hook',
+    'https://agent-workroom-gate.example.workers.dev/wake',
     'https://hooks.example.test:8443/hook',
     'https://singlelabel/hook',
   ]) {
@@ -84,11 +86,15 @@ test('wakeAuthFrom and wakeAuthHeader enforce exact URL pin and per-invocation i
   const url = 'https://wake.example.test/hook/abc';
   assert.deepEqual(wakeAuthHeader(wakeAuthFrom({}), 'agent:grok', url), {});
   assert.deepEqual(wakeAuthHeader(wakeAuthFrom({ GROK_WAKE_KEY: 'k1' }), 'agent:grok', url), {});
-  const auth = wakeAuthFrom({ GROK_WAKE_KEY: 'k1', GROK_WAKE_URL: url });
+  const dotsUrl = 'https://agent-workroom-dots-wake.example.workers.dev/wake';
+  const auth = wakeAuthFrom({ GROK_WAKE_KEY: 'k1', GROK_WAKE_URL: url, DOTS_WAKE_KEY: 'd1', DOTS_WAKE_URL: dotsUrl });
   assert.deepEqual(wakeAuthHeader(auth, 'agent:grok', url), { Authorization: 'Bearer k1' });
   assert.deepEqual(wakeAuthHeader(auth, 'agent:grok', url + '?x=1'), {});
   assert.deepEqual(wakeAuthHeader(auth, 'agent:muse', url), {});
   assert.deepEqual(wakeAuthHeader(auth, 'constructor', url), {});
+  assert.deepEqual(wakeAuthHeader(auth, 'agent:dots', dotsUrl), { Authorization: 'Bearer d1' });
+  assert.deepEqual(wakeAuthHeader(auth, 'agent:dots', url), {});
+  assert.deepEqual(wakeAuthHeader(auth, 'agent:grok', dotsUrl), {});
   assert.ok(Object.isFrozen(auth) && Object.isFrozen(auth['agent:grok']));
 
   const fakeDb = (id: string): Database => {
