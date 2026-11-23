@@ -7,6 +7,7 @@ import type { Env } from './db.ts';
 import { Workroom } from './domain.ts';
 import { wakeAuthFrom } from './notify.ts';
 import { mcpHandler } from './mcp.ts';
+import type { McpEvents } from './mcp-events.ts';
 import { HTML, BROWSER } from '../ui/page.ts';
 import { taskRoute } from './task-routes.ts';
 import { claimViewsRoute } from './claim-views-route.ts';
@@ -27,7 +28,7 @@ import { nativeArtifacts } from './wrgit/native-artifacts.ts';
 
 export type Identity = string | { principal: string; write: boolean };
 export type Authenticate = (request: Request, env: Env) => Promise<Identity>;
-export interface AppOptions { connection?: (env: Env, identity: { principal: string; write: boolean }) => Promise<unknown>; ui?: boolean; pre?: (request: Request, env: Env) => Promise<Response | null>; legacy?: (env: Env) => boolean; artifacts?: (env: Env) => ArtifactsBinding | undefined }
+export interface AppOptions { connection?: (env: Env, identity: { principal: string; write: boolean }) => Promise<unknown>; ui?: boolean; pre?: (request: Request, env: Env) => Promise<Response | null>; legacy?: (env: Env) => boolean; artifacts?: (env: Env) => ArtifactsBinding | undefined; isolatedEvents?: (env: Env) => McpEvents }
 // MCP tools that only read. A principal without write permission may call only these.
 export const READ_TOOLS = new Set(['workroom_capabilities','workroom_connection_capabilities','workroom_whoami','workroom_room_read','workroom_unread','workroom_mentions','workroom_latency_stats','workroom_memory_search','workroom_memory_view','workroom_review_prepare','workroom_context_pack','workroom_brief_get','workroom_memory_recall','workroom_fold_view','workroom_skill_grade','workroom_experience_view','workroom_webhook_get','workroom_wake_proof','workroom_unit_cost_summary','workroom_operation_get','workroom_thread_read','workroom_message_history','workroom_inbox_pull','workroom_room_export','workroom_task_get','workroom_my_queue','workroom_usage_read']);
 for (const name of RECEIPT_READ_TOOLS) READ_TOOLS.add(name);
@@ -88,7 +89,8 @@ export function createApp(authenticate: Authenticate, options: AppOptions = {}) 
       if (!write && url.pathname !== '/mcp' && request.method !== 'GET') throw new Fault('FORBIDDEN', 'Token lacks write scope.', 403);
       // The raw binding is the native namespace. WR-GIT code sees only the adapter, and only with WRGIT_ENABLED=1.
       const artifacts = env.WRGIT_ENABLED !== '1' ? undefined : options.artifacts ? options.artifacts(env) : env.ARTIFACTS && nativeArtifacts(env.ARTIFACTS);
-      const service = new Workroom(env.DB, principal, ctx ? p => ctx.waitUntil(p) : undefined, wakeAuthFrom(env), wrgitClaim(env, artifacts));
+      const events = options.isolatedEvents?.(env);
+      const service = new Workroom(env.DB, principal, ctx ? p => ctx.waitUntil(p) : undefined, wakeAuthFrom(env), wrgitClaim(env, artifacts), events);
       await service.authorize();
       const connection = options.connection ? () => options.connection!(env, { principal, write }) : undefined;
       if (url.pathname === '/mcp') {
@@ -97,7 +99,9 @@ export function createApp(authenticate: Authenticate, options: AppOptions = {}) 
         const text = await boundedBody(request);
         if (!write && writesIn(text)) throw new Fault('FORBIDDEN', 'Token lacks write scope.', 403);
         const forwarded = new Request(request.url, { method: 'POST', headers: request.headers, body: text });
-        const response = await mcpHandler(service, options.legacy?.(env) ? 'stateless' : 'reject', connection, env).fetch(forwarded);
+        const grant = await events?.grant(request, principal);
+        const registerEvents = events && grant ? (server: Parameters<McpEvents['register']>[0]) => events.register(server, grant, write) : undefined;
+        const response = await mcpHandler(service, options.legacy?.(env) ? 'stateless' : 'reject', connection, env, registerEvents).fetch(forwarded);
         const secured = new Response(response.body, response);
         for (const [k, v] of Object.entries(headers)) secured.headers.set(k, v);
         return secured;
