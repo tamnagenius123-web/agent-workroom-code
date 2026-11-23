@@ -5,6 +5,7 @@
   "no_bundle": true,
   "find_additional_modules": false,
   "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "preview_urls": false,
   // Webhook retry: re-deliver due pending webhook_outbox rows.
