@@ -85,6 +85,7 @@ async function hasClaim(db: Database) {
 // (GROK_WAKE_URL). Unset pin, unset key, or any URL change => no header (fail closed; receiver 401 is not a wake).
 const WAKE_KEY_ENV: Record<string, { key: string; url: string }> = {
   'agent:grok': { key: 'GROK_WAKE_KEY', url: 'GROK_WAKE_URL' },
+  'agent:dots': { key: 'DOTS_WAKE_KEY', url: 'DOTS_WAKE_URL' },
 };
 
 // Immutable per-invocation auth context: built from this invocation's env and passed explicitly into deliver,
@@ -163,13 +164,14 @@ export async function deliver(
 interface Row { id: string; principal_id?: string; payload_json: string; attempts: number; url: string; secret: string }
 
 const PRIVATE = [/^localhost$/, /\.localhost$/, /\.local$/, /\.internal$/, /^metadata\./, /^agent-workroom-.*\.workers\.dev$/];
+const ALLOWED_WORKER = /^agent-workroom-dots-wake\.[a-z0-9-]+\.workers\.dev$/;
 export function checkWebhookUrl(raw: string) {
   let u: URL; try { u = new URL(raw); } catch { throw new Fault('INVALID_INPUT', 'Invalid webhook URL.'); }
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (u.protocol !== 'https:') throw new Fault('INVALID_INPUT', 'Webhook URL must use https.');
   if (u.username || u.password) throw new Fault('INVALID_INPUT', 'Webhook URL must not contain credentials.');
   if (/^[\d.]+$/.test(host) || host.includes(':')) throw new Fault('INVALID_INPUT', 'Use a public DNS hostname, not an IP literal.');
-  if (!host.includes('.') || PRIVATE.some(p => p.test(host))) throw new Fault('INVALID_INPUT', 'Private or internal webhook hosts are not allowed.');
+  if (!host.includes('.') || (!ALLOWED_WORKER.test(host) && PRIVATE.some(p => p.test(host)))) throw new Fault('INVALID_INPUT', 'Private or internal webhook hosts are not allowed.');
   if (u.port && u.port !== '443') throw new Fault('INVALID_INPUT', 'Webhook URL must use port 443.');
   return u.href;
 }
