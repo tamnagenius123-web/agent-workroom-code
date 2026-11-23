@@ -64,6 +64,10 @@ export interface GenerationTokens {
   prompt: number | null;
   completion: number | null;
   total: number | null;
+  reasoning?: number | null;
+  content?: number | null;
+  native_prompt?: number | null;
+  native_completion?: number | null;
 }
 
 export interface SettleInput {
@@ -92,6 +96,8 @@ export interface ChatUsage {
   prompt_tokens: number | null;
   completion_tokens: number | null;
   total_tokens: number | null;
+  reasoning_tokens?: number | null;
+  content_tokens?: number | null;
 }
 
 export interface GenerationCost {
@@ -225,15 +231,31 @@ function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function detailReasoning(record: Record<string, unknown>): number | null {
+  const details = record.completion_tokens_details;
+  if (details && typeof details === 'object' && !Array.isArray(details)) {
+    const val = asNumber((details as Record<string, unknown>).reasoning_tokens);
+    if (val !== null) return val;
+  }
+  return asNumber(record.reasoning_tokens);
+}
+
 function usageOf(body: unknown): ChatUsage {
   const raw = body && typeof body === 'object' ? (body as { usage?: unknown }).usage : null;
   if (!raw || typeof raw !== 'object') return { prompt_tokens: null, completion_tokens: null, total_tokens: null };
   const usage = raw as Record<string, unknown>;
-  return {
-    prompt_tokens: asNumber(usage.prompt_tokens),
-    completion_tokens: asNumber(usage.completion_tokens),
-    total_tokens: asNumber(usage.total_tokens),
-  };
+  const prompt_tokens = asNumber(usage.prompt_tokens);
+  const completion_tokens = asNumber(usage.completion_tokens);
+  const total_tokens = asNumber(usage.total_tokens);
+  const reasoning_tokens = detailReasoning(usage);
+  const out: ChatUsage = { prompt_tokens, completion_tokens, total_tokens };
+  if (reasoning_tokens !== null) {
+    out.reasoning_tokens = reasoning_tokens;
+    if (completion_tokens !== null && completion_tokens >= reasoning_tokens) {
+      out.content_tokens = completion_tokens - reasoning_tokens;
+    }
+  }
+  return out;
 }
 
 function textOf(body: unknown): string {
@@ -360,7 +382,26 @@ function presentUsd(value: unknown): number | undefined {
 function tokensOf(record: Record<string, unknown>): GenerationTokens {
   const prompt = asNumber(record.tokens_prompt);
   const completion = asNumber(record.tokens_completion);
-  return { prompt, completion, total: prompt !== null && completion !== null ? prompt + completion : null };
+  const nativePrompt = asNumber(record.native_tokens_prompt);
+  const nativeCompletion = asNumber(record.native_tokens_completion);
+  const nativeReasoning = asNumber(record.native_tokens_reasoning);
+  const reasoning = nativeReasoning ?? detailReasoning(record);
+  const out: GenerationTokens = {
+    prompt,
+    completion,
+    total: prompt !== null && completion !== null ? prompt + completion : null,
+  };
+  if (reasoning !== null) {
+    out.reasoning = reasoning;
+    if (nativeReasoning !== null && nativeCompletion !== null && nativeCompletion >= nativeReasoning) {
+      out.content = nativeCompletion - nativeReasoning;
+    } else if (nativeReasoning === null && completion !== null && completion >= reasoning) {
+      out.content = completion - reasoning;
+    }
+  }
+  if (nativePrompt !== null) out.native_prompt = nativePrompt;
+  if (nativeCompletion !== null) out.native_completion = nativeCompletion;
+  return out;
 }
 
 function sleep(ms: number): Promise<void> {
