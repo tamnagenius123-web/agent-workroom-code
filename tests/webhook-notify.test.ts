@@ -201,6 +201,7 @@ test('MCP webhook tools register, inspect, test with HMAC signature, deliver on 
       idempotency_key: 'webhook-mention-0001',
     });
     assert.equal(postRes.body.result?.structuredContent?.ok, true);
+    for (let i = 0; i < 100 && deliveries.length < 2; i++) await new Promise(r => setTimeout(r, 10));
     assert.equal(deliveries.length, 2);
     const mentionPayload = JSON.parse(deliveries[1]!.body) as { type: string; sender: string; recipient: string; mentioned: boolean };
     assert.equal(mentionPayload.type, 'workroom.message');
@@ -294,25 +295,25 @@ test('deliver supports claim-fenced outbox schema and refuses stale completion a
 
     let releaseFetch!: () => void;
     const gate = new Promise<void>(resolve => { releaseFetch = resolve; });
+    let inflight!: Promise<number>;
     const started = new Promise<void>(resolve => {
-      const inflight = deliver(db, ['fenced-1'], undefined, (async () => {
+      inflight = deliver(db, ['fenced-1'], undefined, (async () => {
         resolve();
         await gate;
         return new Response('ok', { status: 200 });
       }) as typeof fetch);
-      void inflight.then(async () => {
-        const after = await app.db.prepare('SELECT status,last_error,claim_token,claimed_until FROM webhook_outbox WHERE id=?').bind('fenced-1').first<{
-          status: string; last_error: string; claim_token: string | null; claimed_until: number | null;
-        }>();
-        assert.equal(after?.status, 'failed');
-        assert.equal(after?.last_error, 'webhook removed');
-      });
     });
 
     await started;
     await hooks.remove();
     releaseFetch();
-    await new Promise(r => setTimeout(r, 20));
+    const attempted = await inflight;
+    assert.equal(attempted, 1);
+    const after = await app.db.prepare('SELECT status,last_error,claim_token,claimed_until FROM webhook_outbox WHERE id=?').bind('fenced-1').first<{
+      status: string; last_error: string; claim_token: string | null; claimed_until: number | null;
+    }>();
+    assert.equal(after?.status, 'failed');
+    assert.equal(after?.last_error, 'webhook removed');
     const finalRow = await app.db.prepare('SELECT status,last_error FROM webhook_outbox WHERE id=?').bind('fenced-1').first<{
       status: string; last_error: string;
     }>();
