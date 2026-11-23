@@ -51,6 +51,38 @@ export function missingAgentCredentials(error: unknown): boolean {
   return `${message} ${cause}`.toLowerCase().includes('no such table');
 }
 
+function missingUsageSchema(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const cause = error instanceof Error && error.cause instanceof Error ? error.cause.message : '';
+  const text = `${message} ${cause}`.toLowerCase();
+  return text.includes('no such table') || text.includes('no such column');
+}
+
+/** Minimum gap between last_used_at writes for one credential. */
+export const LAST_USED_WRITE_WINDOW_MS = 300_000;
+
+/**
+ * Best-effort usage signal for a successful wrk_ authentication: stamps
+ * agent_credentials.last_used_at (migration 0083), throttled by
+ * LAST_USED_WRITE_WINDOW_MS so steady traffic does not write on every
+ * request. Only the non-secret key_id and a timestamp are written; the
+ * token and its hash never reach this path. Returns false without throwing
+ * when the usage schema has not landed yet, so authentication never depends
+ * on the signal being recordable.
+ */
+export async function recordAgentCredentialUse(db: Database, keyId: string, now: number): Promise<boolean> {
+  try {
+    const result = await db.prepare(
+      `UPDATE agent_credentials SET last_used_at=?
+       WHERE key_id=? AND (last_used_at IS NULL OR last_used_at<=?)`,
+    ).bind(now, keyId, now - LAST_USED_WRITE_WINDOW_MS).all();
+    return result.success;
+  } catch (error) {
+    if (missingUsageSchema(error)) return false;
+    throw error;
+  }
+}
+
 export async function readAgentCredential(db: Database, token: string, now: number): Promise<AgentCredential | null> {
   if (!isAgentToken(token)) return null;
   let row: Stored | null;
