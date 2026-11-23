@@ -115,3 +115,31 @@ test('generation cost lookup retries 404s with backoff and then returns the cost
   assert.equal(gets, 3);
   assert.ok(elapsed >= 60, 'expected 20ms then 40ms backoff, got ' + elapsed);
 });
+
+test('generation cost lookup persists reasoning vs content token split when reported', async () => {
+  const fetchImpl = async () => Response.json({
+    data: {
+      id: 'gen-reason',
+      total_cost: 0.00002805,
+      tokens_prompt: 8,
+      tokens_completion: 137,
+      native_tokens_prompt: 18,
+      native_tokens_completion: 112,
+      native_tokens_reasoning: 100,
+      provider_name: 'Wafer',
+      model: 'z-ai/glm-5.3-flash-20260826',
+    },
+  });
+  const cost = await getGenerationCost('gen-reason', {
+    fetchImpl, apiKey: 'test-key', retries: 1, delayMs: 0, timeoutMs: 1000,
+  });
+  assert.deepEqual(cost?.tokens, {
+    prompt: 8,
+    completion: 137,
+    total: 145,
+    reasoning: 100,
+    content: 12,
+    native_prompt: 18,
+    native_completion: 112,
+  });
+});
