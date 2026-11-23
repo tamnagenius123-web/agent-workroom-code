@@ -5,7 +5,7 @@ import { experienceView } from './experience.ts';
 import { foldReviewQueue } from './fold-pack.ts';
 import { validView, type MemoryItem } from './memory-items.ts';
 import { skillGrade, type SkillGrade } from './skill-grade.ts';
-import { ownerMemory, type OwnerMemory } from './memory-hook.ts';
+import { assertStandingFits, ownerMemory, type OwnerMemory } from './memory-hook.ts';
 
 // OCG-W W8: read-only compiled room brief. A view, never a source of truth. No table and no write.
 // Decisions and skills are validView (ABSORB_DESIGN valid_view: approved, in window, pending excluded).
@@ -259,6 +259,9 @@ export async function roomBrief(db: Database, room: string, opts: RoomBriefOptio
       ORDER BY t.updated_at_ms DESC, t.id DESC LIMIT ?`).bind(Date.parse(atTime), roomId, TASK_LIMIT).all<TaskRow>(),
     foldReviewQueue(db, roomId),
   ]);
+  // U7/G4: the standing block counts toward maxChars like everything else and is never a
+  // drop candidate; a block that alone exceeds maxChars fails instead of inflating the cap.
+  assertStandingFits(om, maxChars, 'max_chars');
   const skills: BriefSkill[] = [];
   const ranked = [...skillRows].sort(bySkill);
   for (const item of ranked.slice(0, SKILL_LIMIT)) {
@@ -283,7 +286,7 @@ export async function roomBrief(db: Database, room: string, opts: RoomBriefOptio
       owner_id: textOrNull(row.owner_id),
       holder_id: textOrNull(row.holder_id),
     })),
-    maxChars: maxChars + (om ? JSON.stringify(om).length : 0),
+    maxChars,
     ownerMemory: om,
     decisionsOmitted: Math.max(0, countOf(counts?.valid_decisions) - decisionRows.length),
     extraNotes: [...(skillRows.length > SKILL_LIMIT ? [SKILL_CAP_NOTE] : []), ...(countOf(counts?.valid_decisions) > decisionRows.length ? [`Loaded the newest ${decisionRows.length} of ${countOf(counts?.valid_decisions)} valid decisions before budget trimming; decisions_omitted counts the older ones not loaded, and budget trimming may drop more.`] : [])],

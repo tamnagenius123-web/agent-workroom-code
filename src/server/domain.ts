@@ -3,7 +3,8 @@ import { proposeItem, proposePromotion, promotionChain, proposeSupersede, validV
 import { reviewItem, reviewEdge, prepareReview, reviewsAwaiting, unknownItem, unknownEdge } from './memory-review.ts';
 import { contextPack } from './context-pack.ts';
 import { roomBrief } from './room-brief.ts';
-import { ownerMemory } from './memory-hook.ts';
+import { assertStandingFits, ownerMemory } from './memory-hook.ts';
+import { pinTable } from './pin-table.ts';
 import { proposeFold, reviewFold, reviewFoldEdge, foldView } from './fold.ts';
 import { foldedContextPack } from './fold-pack.ts';
 import { skillGrade, endorseSkill } from './skill-grade.ts';
@@ -105,7 +106,10 @@ export class Workroom {
   async reviewPrepare(i: { room: string; target: 'item' | 'edge'; id: string }) { await this.authorize(i.room); if (i.target === 'item') await this.sameRoomItem(i.room, i.id); else await this.sameRoomEdge(i.room, i.id); return { data: await prepareReview(this.db, i.target, i.id) }; }
   async memoryReview(i: { room: string; target: 'item' | 'edge'; id: string; verdict: 'approve' | 'reject'; reason: string; content_digest: string }) { await this.authorize(i.room, true); if (i.target === 'item') await this.sameRoomItem(i.room, i.id); else await this.sameRoomEdge(i.room, i.id); const f = i.target === 'item' ? reviewItem : reviewEdge; return { data: { [i.target]: await f(this.db, this.principal, i.id, i.verdict, i.reason, i.content_digest) } }; }
   async memoryView(i: { room: string; kinds?: MemoryKind[]; at?: string; include_pending: boolean }) { await this.authorize(i.room); return { data: { items: await validView(this.db, i.room, { kinds: i.kinds, at: i.at, includePending: i.include_pending }) } }; }
-  async contextPack(i: { room: string; task: string; budget_chars: number; at?: string; folds?: boolean }) { await this.authorize(i.room); const pack = i.folds ? await foldedContextPack(this.db, i.room, i.task, i.budget_chars, i.at) : await contextPack(this.db, i.room, i.task, i.budget_chars, i.at); const om = await ownerMemory(this.db, { kind: 'handoff', text: i.task }); return { data: om ? { owner_memory: om, ...pack } : pack }; }
+  // U7/G4: the standing owner notices come first and are never truncated; a block that alone
+  // exceeds budget_chars fails the call (assertStandingFits). pin_table compares every entry's
+  // pinned source revision with the current one, for the plain and the folded pack alike.
+  async contextPack(i: { room: string; task: string; budget_chars: number; at?: string; folds?: boolean }) { await this.authorize(i.room); const om = await ownerMemory(this.db, { kind: 'handoff', text: i.task }); assertStandingFits(om, i.budget_chars, 'budget_chars'); const pack = i.folds ? await foldedContextPack(this.db, i.room, i.task, i.budget_chars, i.at) : await contextPack(this.db, i.room, i.task, i.budget_chars, i.at); const table = pinTable(pack.sections); return { data: om ? { owner_memory: om, ...pack, pin_table: table } : { ...pack, pin_table: table } }; }
   async foldPropose(i: { room: string; id?: string; summary: string; valid_from: string; message_ids?: string[]; child_fold_ids?: string[]; supersedes?: string }) { await this.authorize(i.room, true); return { data: await proposeFold(this.db, this.principal, { id: i.id, room_id: i.room, summary: i.summary, valid_from: i.valid_from, message_ids: i.message_ids, child_fold_ids: i.child_fold_ids, supersedes: i.supersedes }) }; }
   async foldReview(i: { room: string; target: 'fold' | 'edge'; id: string; verdict: 'approve' | 'reject'; reason: string; content_digest: string }) { await this.authorize(i.room, true); return { data: i.target === 'fold' ? { fold: await reviewFold(this.db, this.principal, i.room, i.id, i.verdict, i.reason, i.content_digest) } : { edge: await reviewFoldEdge(this.db, this.principal, i.room, i.id, i.verdict, i.reason, i.content_digest) } }; }
   async foldView(i: { room: string; at?: string; include_pending: boolean }) { await this.authorize(i.room); return { data: await foldView(this.db, i.room, { at: i.at, includePending: i.include_pending }) }; }
