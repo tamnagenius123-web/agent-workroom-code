@@ -59,6 +59,37 @@ test('a descendant named ..cache is rejected before native root creation', async
   } finally { await f.cleanup(); }
 });
 
+test('an existing symlink ancestor is rejected before creating a source child directory', async () => {
+  const f = await fixture();
+  try {
+    await f.configure();
+    const alias = join(f.dir, 'outside-looking-root');
+    await symlink(f.source, alias, 'dir');
+    const error = await createLocalNativeHook({ spec_path: join(f.dir, 'unit.json'),
+      approved_sha256: nativeDigest(JSON.stringify(f.unit)), repository: f.source, root: join(alias, 'native-child') })
+      .then(() => null, (error: unknown) => error);
+    const created = await lstat(join(f.source, 'native-child')).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
+    assert.deepEqual({ alias_hold: error instanceof NativeHold && error.code === 'native_root_alias', created },
+      { alias_hold: true, created: false });
+  } finally { await f.cleanup(); }
+});
+
+test('a dangling symlink ancestor receives an alias hold without creating its missing target', async () => {
+  const f = await fixture();
+  try {
+    await f.configure();
+    const alias = join(f.dir, 'dangling-root'), missing = join(f.source, 'missing-target');
+    await symlink(missing, alias, 'dir');
+    await assert.rejects(createLocalNativeHook({ spec_path: join(f.dir, 'unit.json'),
+      approved_sha256: nativeDigest(JSON.stringify(f.unit)), repository: f.source, root: join(alias, 'native-child') }),
+      (error: unknown) => error instanceof NativeHold && error.code === 'native_root_alias');
+    await assert.rejects(lstat(missing), { code: 'ENOENT' });
+  } finally { await f.cleanup(); }
+});
+
 test('native data tools produce real exact-head checks and an isolated local branch; replay performs no new write or commit', async () => {
   const f = await fixture();
   try {

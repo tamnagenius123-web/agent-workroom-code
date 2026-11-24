@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import { cp, lstat, mkdir, open, readFile, realpath, rename } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { rosterCapMicros } from '../../src/or-harness/client.ts';
@@ -76,6 +76,21 @@ async function fileDigest(path: string): Promise<string | null> {
   try { return nativeDigest(await readFile(path)); }
   catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
 }
+/** Inspect existing prefixes before mkdir can follow an alias. lstat catches
+ * dangling links too. The trusted host must still prevent concurrent path
+ * replacement; the post-mkdir realpath check remains a second observation. */
+async function assertNativeRootAncestors(root: string): Promise<void> {
+  const filesystemRoot = parse(root).root, parts = relative(filesystemRoot, root).split(sep).filter(Boolean);
+  if (parts.length > 128) throw new NativeHold('native_root_ancestor_limit');
+  let cursor = filesystemRoot;
+  for (let index = 0; index <= parts.length; index++) {
+    if (index > 0) cursor = join(cursor, parts[index - 1]!);
+    let info;
+    try { info = await lstat(cursor); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
+    if (info.isSymbolicLink() || !info.isDirectory() || await realpath(cursor) !== cursor) throw new NativeHold('native_root_alias');
+  }
+}
 const DATA_CHECK = `const fs=require('node:fs');const [kind,path,expected]=process.argv.slice(1);const text=fs.readFileSync(path,'utf8');let ok=false;try{ok=kind==='text-equals'?text===expected:JSON.stringify(JSON.parse(text))===JSON.stringify(JSON.parse(expected));}catch{}process.stdout.write(ok?'data check passed\\n':'data check failed\\n');process.exitCode=ok?0:1;`;
 
 export interface LocalNativeOptions { spec_path: string; approved_sha256: string; repository: string; root: string; git_path?: string }
@@ -92,6 +107,7 @@ export async function createLocalNativeHook(options: LocalNativeOptions): Promis
   const source = await realpath(options.repository), root = resolve(options.root), gitPath = options.git_path ?? '/usr/bin/git';
   const displacement = relative(source, root);
   if (!isAbsolute(gitPath) || !(displacement === '..' || displacement.startsWith('..' + sep))) throw new NativeHold('native_root_inside_repository');
+  await assertNativeRootAncestors(root);
   await mkdir(root, { recursive: true, mode: 0o700 });
   if (await realpath(root) !== root) throw new NativeHold('native_root_alias');
   const home = join(root, 'home'); await mkdir(home, { mode: 0o700, recursive: true });
