@@ -1,8 +1,12 @@
-import { Fault, ROOM } from './contracts.ts';
+import { z } from 'zod';
+import { sha256 as storedSha256 } from '../auth/crypto.ts';
+import { Fault, ROOM, textSchema } from './contracts.ts';
 import type { Database,Statement,Value } from './db.ts';
 import { AUTH } from './policy.ts';
 import { canonical,planMutation,run,sha256,type Access,type Plan,type Predicate,type Row } from './mutations.ts';
 import type { TaskClaimNext,TaskCreate,TaskGet,TaskAction } from './task-contracts.ts';
+import { BUILDER_UNIT_LEASE_MS,MAX_UNIT_LEASE_MS,storedTaskSpecSchema,taskSpecSchema,taskUnitSchema } from './task-contracts.ts';
+import { idSchema } from './g2-contracts.ts';
 
 export const DB_NOW="CAST((julianday('now')-2440587.5)*86400000 AS INTEGER)";
 export const LOCAL_LEASE_MS=30000;
@@ -12,15 +16,43 @@ function claimLost(error:unknown) {
   const message=error instanceof Error?error.message+' '+(error.cause instanceof Error?error.cause.message:''):String(error);
   return /invalid task version|SQLITE_BUSY|database is locked/i.test(message);
 }
-const ELIGIBLE=`t.room_id=? AND t.state='open' AND (t.owner_id IS NULL OR t.owner_id=?) AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(t.spec_json,'$.dependencies')) d LEFT JOIN tasks dep ON dep.id=d.value AND dep.room_id=t.room_id WHERE dep.id IS NULL OR dep.state!='done')`;
-interface Spec {goal:string;owner:string|null;dependencies:string[];input_versions:{message_id:string;revision:number}[];done_conditions:string[]}
-interface Task {id:string;room_id:string;creator_id:string;owner_id:string|null;goal:string;dependencies:string[];input_versions:Spec['input_versions'];done_conditions:string[];state:string;version:number;current_submission_id:string|null;cancel_reason:string|null;created_at_ms:number;updated_at_ms:number;stop_confirmation:'unavailable_no_runner'}
+// SQL admission mirrors the immutable unit policy. Invalid stored metadata is
+// not a short-lease fallback and cannot mutate a task before JS validation.
+const TASK_LEASE_MS_SQL=`CASE WHEN json_type(t.spec_json,'$.unit') IS NULL THEN ${LOCAL_LEASE_MS}
+  WHEN json_type(t.spec_json,'$.unit')='object' AND json_extract(t.spec_json,'$.unit.kind')='builder'
+    AND NOT EXISTS (SELECT 1 FROM json_each(t.spec_json,'$.unit') u WHERE u.key NOT IN ('kind','lease_ms'))
+    AND (json_type(t.spec_json,'$.unit.lease_ms') IS NULL OR
+      (json_type(t.spec_json,'$.unit.lease_ms') IN ('integer','real') AND json_extract(t.spec_json,'$.unit.lease_ms')=CAST(json_extract(t.spec_json,'$.unit.lease_ms') AS INTEGER)
+       AND json_extract(t.spec_json,'$.unit.lease_ms') BETWEEN 1 AND ${MAX_UNIT_LEASE_MS}))
+  THEN COALESCE(json_extract(t.spec_json,'$.unit.lease_ms'),${BUILDER_UNIT_LEASE_MS}) ELSE NULL END`;
+const ELIGIBLE=`t.room_id=? AND t.version<2147483647 AND (${TASK_LEASE_MS_SQL}) IS NOT NULL
+  AND EXISTS (SELECT 1 FROM task_leases ready_lease WHERE ready_lease.task_id=t.id AND ready_lease.lease_epoch BETWEEN 0 AND 2147483646
+    AND (t.state='open' OR (t.state='in_progress' AND ready_lease.expires_at_ms<=${DB_NOW})))
+  AND (t.owner_id IS NULL OR t.owner_id=?) AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(t.spec_json,'$.dependencies')) d LEFT JOIN tasks dep ON dep.id=d.value AND dep.room_id=t.room_id WHERE dep.id IS NULL OR dep.state!='done')`;
+type Spec=z.infer<typeof storedTaskSpecSchema>;
+interface Task {id:string;room_id:string;creator_id:string;owner_id:string|null;goal:string;dependencies:string[];input_versions:Spec['input_versions'];done_conditions:string[];unit?:Spec['unit'];state:string;version:number;current_submission_id:string|null;cancel_reason:string|null;created_at_ms:number;updated_at_ms:number;stop_confirmation:'unavailable_no_runner'}
 interface Lease {task_id:string;holder_id:string|null;lease_epoch:number;expires_at_ms:number}
 interface Submission {id:string;task_id:string;actor_id:string;lease_epoch:number;artifact_message_id:string;artifact_revision:number;disposition:'review'|'blocked';reason:string|null;submitted_at_ms:number}
 export interface Bundle {task:Task;lease:Lease;submission:Submission|null;server_time_ms:number;lease_active:boolean;submitted?:Submission;changes_requested?:{submission_id:string;reviewer_id:string;reason:string}}
 interface TaskRow {id:string;room_id:string;creator_id:string;owner_id:string|null;spec_json:string;state:string;version:number;current_submission_id:string|null;cancel_reason:string|null;created_at_ms:number;updated_at_ms:number}
 export type Action='claim'|'renew'|'submit'|'cancel'|'approve'|'request_changes';
 export interface WrgitClaim { enabled: boolean; prepare(): Promise<void>; ensureWorkspace(taskId: string, agentId: string): Promise<void>; pendingHeld(taskId: string, agentId: string): Promise<boolean>; pendingTask(agentId: string): Promise<string | null>; pendingMarker(fresh: string, args: Value[], taskId: string, agentId: string): Statement }
+
+const natural=z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const leaseSchema=z.object({task_id:idSchema,holder_id:idSchema.nullable(),lease_epoch:natural.max(2147483647),expires_at_ms:natural}).strict();
+const submissionSchema=z.object({id:idSchema,task_id:idSchema,actor_id:idSchema,lease_epoch:natural.min(1),artifact_message_id:idSchema,
+  artifact_revision:natural.min(1),disposition:z.enum(['review','blocked']),reason:textSchema.nullable(),submitted_at_ms:natural}).strict();
+const taskRecordSchema=z.object({id:idSchema,room_id:idSchema,creator_id:idSchema,owner_id:idSchema.nullable(),goal:textSchema,
+  dependencies:taskSpecSchema.shape.dependencies,input_versions:taskSpecSchema.shape.input_versions,done_conditions:z.array(textSchema).max(20),unit:taskUnitSchema.optional(),
+  state:z.enum(['open','in_progress','blocked','review','done','canceled']),version:natural.min(1).max(2147483647),current_submission_id:idSchema.nullable(),
+  cancel_reason:textSchema.nullable(),created_at_ms:natural,updated_at_ms:natural,stop_confirmation:z.literal('unavailable_no_runner')}).strict();
+export const taskBundleSchema=z.object({task:taskRecordSchema,lease:leaseSchema,submission:submissionSchema.nullable(),server_time_ms:natural,lease_active:z.boolean(),
+  submitted:submissionSchema.optional(),changes_requested:z.object({submission_id:idSchema,reviewer_id:idSchema,reason:textSchema}).strict().optional()});
+const claimResultSchema=taskBundleSchema.extend({
+  operation:z.object({type:z.literal(CLAIM_NEXT),idempotency_key:z.string().min(1),id:idSchema}).strict(),
+  claim_precondition:z.object({state:z.enum(['open','in_progress']),holder_id:idSchema.nullable(),lease_epoch:natural,expires_at_ms:natural}).strict().optional()}).strict();
+type ClaimResult=z.infer<typeof claimResultSchema>;
+const leaseMs=(task:Pick<Task,'unit'>)=>task.unit?.lease_ms??LOCAL_LEASE_MS;
 
 /** state is task.state. lease_active is the in-progress lease that has not reached server time. get and mine both call this. */
 export function taskReadStatus(state:string,expiresAtMs:number,nowMs:number):{state:string;lease_active:boolean} {
@@ -38,9 +70,10 @@ export class Tasks {
       ${DB_NOW} AS server_time_ms FROM tasks t JOIN task_leases l ON l.task_id=t.id LEFT JOIN task_submissions s ON s.id=t.current_submission_id AND s.task_id=t.id WHERE t.id=? AND t.room_id=?`)
       .bind(input.task_id,input.room).first<TaskRow&{lease_json:string;submission_json:string|null;server_time_ms:number}>();
     if(!row) throw new Fault('NOT_FOUND','Task not found.',404);
-    const {spec_json,lease_json,submission_json,server_time_ms,...rest}=row,spec=JSON.parse(spec_json) as Spec;
-    const task:Task={...rest,goal:spec.goal,dependencies:spec.dependencies,input_versions:spec.input_versions,done_conditions:spec.done_conditions,stop_confirmation:'unavailable_no_runner'};
-    const lease=JSON.parse(lease_json) as Lease,submission=submission_json?JSON.parse(submission_json) as Submission:null,now=server_time_ms;
+    const {spec_json,lease_json,submission_json,server_time_ms,...rest}=row,spec=storedTaskSpecSchema.parse(JSON.parse(spec_json));
+    const task:Task={...rest,goal:spec.goal,dependencies:spec.dependencies,input_versions:spec.input_versions,done_conditions:spec.done_conditions,
+      ...(spec.unit?{unit:spec.unit}:{}),stop_confirmation:'unavailable_no_runner'};
+    const lease=leaseSchema.parse(JSON.parse(lease_json)),submission=submission_json?submissionSchema.parse(JSON.parse(submission_json)):null,now=server_time_ms;
     const read=taskReadStatus(task.state,lease.expires_at_ms,now);
     return {data:{task,lease,submission,server_time_ms:now,lease_active:read.lease_active},meta:{}};
   }
@@ -67,10 +100,37 @@ export class Tasks {
         LEFT JOIN tasks dep ON dep.id=d.value AND dep.room_id=t.room_id
         WHERE dep.id IS NULL OR dep.state!='done'),'[]') AS dep_ids
       FROM tasks t WHERE t.room_id=? AND t.state='blocked' ORDER BY t.created_at_ms, t.id`).bind(room).all<{id:string;state:string;dep_ids:string}>();
-    return {data:{tasks:loaded.results.map(row=>({id:row.id,state:row.state,dep_ids:JSON.parse(row.dep_ids) as string[]}))},meta:{}};
+    return {data:{tasks:loaded.results.map(row=>({id:row.id,state:row.state,dep_ids:taskSpecSchema.shape.dependencies.parse(JSON.parse(row.dep_ids))}))},meta:{}};
   }
   private role(kind:string):Predicate {return {sql:'EXISTS (SELECT 1 FROM principal_roles WHERE principal_id=? AND kind=?)',args:[this.principal,kind]};}
   private async check(p:Predicate) {return !!await this.db.prepare('SELECT 1 WHERE '+p.sql).bind(...p.args).first();}
+  // Ordinary manual submissions keep their existing contract. A host consuming
+  // an execution artifact opts into this exact binding, checked by the task
+  // mutation in the same transaction as the submission effect.
+  private async executionSubmission(input:TaskAction):Promise<Predicate|null> {
+    if(!('execution' in input)||!input.execution||!('artifact_message_id' in input)||!('lease_epoch' in input))return null;
+    const spec=await this.db.prepare('SELECT spec_json FROM tasks WHERE id=? AND room_id=?').bind(input.task_id,input.room).first<{spec_json:string}>();
+    if(!spec)return {sql:'0',args:[]};
+    const execution=input.execution;
+    return {sql:`EXISTS (SELECT 1 FROM execution_runs r JOIN tasks bound_task ON bound_task.id=r.task_id
+      JOIN execution_receipts c ON c.receipt_id=r.receipt_id AND c.run_id=r.run_id
+      WHERE (r.run_id,r.attempt_id,r.task_id,r.principal_id)=(?,?,?,?) AND r.state='settled'
+        AND (r.lease_epoch,r.intent_revision,r.cancel_generation,r.artifact_id)=(?,?,?,?) AND ?=1
+        AND (r.spec_digest,bound_task.spec_json,bound_task.room_id)=(?,?,?)
+        AND (c.verifier,c.disposition,c.attempt_id,c.author_principal,c.task_id,c.lease_epoch,c.intent_revision)
+          =('verifier:g1','PASS',r.attempt_id,r.principal_id,r.task_id,r.lease_epoch,r.intent_revision)
+        AND c.generation_id IS r.generation_id AND c.artifact_id IS r.artifact_id
+        AND COALESCE((SELECT MAX(version) FROM intent_versions),0)=r.intent_revision
+        AND COALESCE((SELECT generation FROM execution_cancels WHERE task_id=r.task_id),0)=r.cancel_generation
+        AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(bound_task.spec_json,'$.dependencies')) d
+          LEFT JOIN tasks dep ON dep.id=d.value AND dep.room_id=bound_task.room_id WHERE dep.id IS NULL OR dep.state!='done')
+        AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(bound_task.spec_json,'$.input_versions')) v
+          WHERE COALESCE((SELECT MAX(h.version) FROM message_history h WHERE h.message_id=json_extract(v.value,'$.message_id')
+            AND h.room_id=bound_task.room_id),-1)<>json_extract(v.value,'$.revision')))`,
+      args:[execution.run_id,execution.attempt_id,input.task_id,this.principal,input.lease_epoch,
+        execution.intent_revision,execution.cancel_generation,input.artifact_message_id,input.artifact_revision,
+        await storedSha256(spec.spec_json),spec.spec_json,input.room]};
+  }
   private refs(spec:Spec):Predicate {
     const parts=['1'],args:Value[]=[];
     if(spec.owner!==null) {parts.push(`EXISTS (SELECT 1 FROM memberships m JOIN principals p ON p.id=m.principal_id JOIN principal_roles r ON r.principal_id=p.id WHERE p.id=? AND p.active=1 AND m.room_id=? AND m.active=1 AND m.can_post=1 AND r.kind='agent')`);args.push(spec.owner,ROOM);}
@@ -81,7 +141,7 @@ export class Tasks {
   private snapshot(data:Bundle,action:'create'|Action):Predicate {
     const changes=["'$.task.updated_at_ms'",DB_NOW,"'$.server_time_ms'",DB_NOW];
     if(action==='create') changes.push("'$.task.created_at_ms'",DB_NOW);
-    if(action==='claim'||action==='renew') changes.push("'$.lease.expires_at_ms'",DB_NOW+'+'+LOCAL_LEASE_MS);
+    if(action==='claim'||action==='renew') changes.push("'$.lease.expires_at_ms'",DB_NOW+'+'+leaseMs(data.task));
     if(action==='submit'){changes.push("'$.submitted.submitted_at_ms'",DB_NOW);if(data.submission)changes.push("'$.submission.submitted_at_ms'",DB_NOW);}
     return {sql:`json_set(json(?),${changes.join(',')})`,args:[JSON.stringify(data)]};
   }
@@ -135,22 +195,24 @@ export class Tasks {
       return this.get({schema_version:'1',room:input.room,task_id:pending});
     }
     for(let attempt=0;;attempt++) {
-      // Repo hash needs the task id in JS. Pin that id and insert the marker in this batch; a lost race retries.
-      const pinned=this.wrgit?.enabled?(await this.oldestEligibleId(input.room)??''):undefined;
+      // Pin and validate the immutable spec before attempting any mutation.
+      // The transaction rechecks this exact task's readiness and lease snapshot;
+      // a competing claim can move the queue, so the retry remains bounded.
+      const pinned=await this.oldestEligibleId(input.room)??'';
       try {
         const result=await run(this.db,await this.planClaimNext(input,pinned));
-        const taskId=(result.data as {task?:{id?:string}}).task?.id;
-        if(taskId) await this.afterClaim(taskId);
+        await this.afterClaim(result.data.task.id);
         return result;
       }
       catch(error) {
-        if(pinned!==undefined&&attempt<3&&await this.pinnedTaskMoved(input.room,pinned,error)) continue;
+        if(attempt<3&&await this.pinnedTaskMoved(input.room,pinned,error)) continue;
         if(attempt>=3||error instanceof Fault||!claimLost(error)) throw error;
       }
     }
   }
   private async oldestEligibleId(room:string):Promise<string|null> {
-    const row=await this.db.prepare(`SELECT t.id AS id FROM tasks t JOIN task_leases l ON l.task_id=t.id WHERE ${ELIGIBLE} ORDER BY t.created_at_ms,t.id LIMIT 1`).bind(room,this.principal).first<{id:string}>();
+    const row=await this.db.prepare(`SELECT t.id AS id,t.spec_json AS spec_json FROM tasks t JOIN task_leases l ON l.task_id=t.id WHERE ${ELIGIBLE} ORDER BY t.created_at_ms,t.id LIMIT 1`).bind(room,this.principal).first<{id:string;spec_json:string}>();
+    if(row) storedTaskSpecSchema.parse(JSON.parse(row.spec_json));
     return row?.id??null;
   }
   private async pinnedTaskMoved(room:string,pinned:string,error:unknown):Promise<boolean> {
@@ -158,7 +220,7 @@ export class Tasks {
     const next=await this.oldestEligibleId(room);
     return next!==(pinned===''?null:pinned);
   }
-  private async planClaimNext(input:TaskClaimNext,pinnedId?:string):Promise<Plan<{data:{operation:{id:string}};meta:{idempotency_key:string;replayed:boolean}}>> {
+  private async planClaimNext(input:TaskClaimNext,pinnedId?:string):Promise<Plan<{data:ClaimResult;meta:{idempotency_key:string;replayed:boolean}}>> {
     await this.access(input.room,true);
     const authority=this.role('agent'),key=input.idempotency_key,id=crypto.randomUUID(),now=new Date().toISOString();
     const hash=await sha256(JSON.stringify(canonical(input)));
@@ -177,21 +239,31 @@ export class Tasks {
     const statements:Statement[]=[
       this.db.prepare(`INSERT INTO operations(principal_id,operation,key,room_id,request_hash,result_json,created_at)
         SELECT ?,?,?,?,?,json_set(json(json_object(
-          'task',json_object('id',picked.id,'room_id',picked.room_id,'creator_id',picked.creator_id,'owner_id',picked.owner_id,
-            'goal',json_extract(picked.spec_json,'$.goal'),'dependencies',json_extract(picked.spec_json,'$.dependencies'),
-            'input_versions',json_extract(picked.spec_json,'$.input_versions'),'done_conditions',json_extract(picked.spec_json,'$.done_conditions'),
+          'task',json_patch(json_object('id',picked.id,'room_id',picked.room_id,'creator_id',picked.creator_id,'owner_id',picked.owner_id,
+            'goal',json_extract(picked.spec_json,'$.goal'),'dependencies',json(COALESCE(json_extract(picked.spec_json,'$.dependencies'),'[]')),
+            'input_versions',json(COALESCE(json_extract(picked.spec_json,'$.input_versions'),'[]')),'done_conditions',json(COALESCE(json_extract(picked.spec_json,'$.done_conditions'),'[]')),
             'state','in_progress','version',picked.version+1,'current_submission_id',NULL,'cancel_reason',picked.cancel_reason,
             'created_at_ms',picked.created_at_ms,'updated_at_ms',picked.now_ms,'stop_confirmation','unavailable_no_runner'),
-          'lease',json_object('task_id',picked.id,'holder_id',?,'lease_epoch',picked.lease_epoch+1,'expires_at_ms',picked.now_ms+${LOCAL_LEASE_MS}),
-          'submission',NULL,'server_time_ms',picked.now_ms,'lease_active',json('true')
+            json_object('unit',json_extract(picked.spec_json,'$.unit'))),
+          'lease',json_object('task_id',picked.id,'holder_id',?,'lease_epoch',picked.lease_epoch+1,'expires_at_ms',picked.now_ms+picked.lease_ms),
+          'submission',NULL,'server_time_ms',picked.now_ms,'lease_active',json('true'),
+          'claim_precondition',json_object('state',picked.prior_state,'holder_id',picked.prior_holder,'lease_epoch',picked.lease_epoch,'expires_at_ms',picked.prior_expiry)
         )),'$.operation',json(?)),?
         FROM (SELECT t.id AS id,t.room_id AS room_id,t.creator_id AS creator_id,t.owner_id AS owner_id,t.spec_json AS spec_json,
-          t.version AS version,t.cancel_reason AS cancel_reason,t.created_at_ms AS created_at_ms,l.lease_epoch AS lease_epoch,${DB_NOW} AS now_ms
+          t.version AS version,t.cancel_reason AS cancel_reason,t.created_at_ms AS created_at_ms,l.lease_epoch AS lease_epoch,${DB_NOW} AS now_ms,
+          t.state AS prior_state,l.holder_id AS prior_holder,l.expires_at_ms AS prior_expiry,(${TASK_LEASE_MS_SQL}) AS lease_ms
           FROM tasks t JOIN task_leases l ON l.task_id=t.id WHERE ${pick} ORDER BY t.created_at_ms,t.id LIMIT 1) picked
         WHERE EXISTS (${permission}) AND (SELECT count(*) FROM operations WHERE principal_id=? AND created_at>=?)<60
         ON CONFLICT(principal_id,operation,key) DO NOTHING`)
         .bind(this.principal,CLAIM_NEXT,key,ROOM,hash,this.principal,JSON.stringify(operation),now,...pickArgs,this.principal,input.room,...authority.args,this.principal,minute),
-      this.db.prepare(cte+`UPDATE tasks SET (${taskFields.join(',')})=(SELECT ${taskFields.map(f=>j('task.'+f)).join(',')} FROM fresh) WHERE id=(SELECT ${j('task.id')} FROM fresh) AND room_id=? AND version=(SELECT ${j('task.version')} FROM fresh)-1 AND state='open'`).bind(...args,input.room),
+      this.db.prepare(cte+`UPDATE tasks AS t SET (${taskFields.join(',')})=(SELECT ${taskFields.map(f=>j('task.'+f)).join(',')} FROM fresh)
+        WHERE t.id=(SELECT ${j('task.id')} FROM fresh) AND t.room_id=? AND t.version=(SELECT ${j('task.version')} FROM fresh)-1
+          AND t.state=(SELECT ${j('claim_precondition.state')} FROM fresh)
+          AND EXISTS (SELECT 1 FROM task_leases old_lease WHERE old_lease.task_id=t.id
+            AND old_lease.holder_id IS (SELECT ${j('claim_precondition.holder_id')} FROM fresh)
+            AND old_lease.lease_epoch=(SELECT ${j('claim_precondition.lease_epoch')} FROM fresh)
+            AND old_lease.expires_at_ms=(SELECT ${j('claim_precondition.expires_at_ms')} FROM fresh)
+            AND (t.state='open' OR (t.state='in_progress' AND old_lease.expires_at_ms<=${DB_NOW})))`).bind(...args,input.room),
       this.db.prepare(cte+`UPDATE tasks SET version=version WHERE changes()=0 AND id=(SELECT ${j('task.id')} FROM fresh) AND room_id=?`).bind(...args,input.room),
       this.db.prepare(cte+`INSERT INTO task_leases(${leaseFields.join(',')}) SELECT ${leaseFields.map(f=>j('lease.'+f)).join(',')} FROM fresh WHERE ${landed} ON CONFLICT(task_id) DO UPDATE SET holder_id=excluded.holder_id,lease_epoch=excluded.lease_epoch,expires_at_ms=excluded.expires_at_ms`).bind(...args,input.room),
       this.db.prepare(cte+`INSERT INTO task_audit(id,principal_id,room_id,operation,target_id,version,created_at) SELECT ?,?,?,?,${j('task.id')},${j('task.version')},? FROM fresh`).bind(...args,crypto.randomUUID(),this.principal,ROOM,CLAIM_NEXT,now),
@@ -203,23 +275,26 @@ export class Tasks {
         await this.access(input.room,true);
         if(!await this.check(authority)) throw new Fault('FORBIDDEN','Task authority denied.',403);
         const next=await this.db.prepare(`SELECT t.id AS id FROM tasks t WHERE ${ELIGIBLE} LIMIT 1`).bind(input.room,this.principal).first();
-        if(!next) throw new Fault('NOT_FOUND','No eligible open task.',404);
+        if(!next) throw new Fault('NOT_FOUND','No eligible ready task.',404);
         throw new Fault('RATE_LIMITED','Mutation limit reached; retry the same key later.',429,'not_applied',true,{retry_after:60-new Date().getUTCSeconds()});
       }
       if(row.request_hash!==hash) throw new Fault('IDEMPOTENCY_CONFLICT','Key already has different content.',409,'not_applied',false,{operation:CLAIM_NEXT,idempotency_key:key,lookup:`/api/v1/operations/${CLAIM_NEXT}/${key}`});
-      const stored=JSON.parse(row.result_json) as {operation:{id:string}};
+      const stored=claimResultSchema.parse(JSON.parse(row.result_json));
       return {data:stored,meta:{idempotency_key:key,replayed:stored.operation.id!==id}};
     }};
   }
   async planCreate(input:TaskCreate) {
     await this.access(input.room,true);
-    const spec:Spec={goal:input.goal,owner:input.owner,dependencies:input.dependencies,input_versions:input.input_versions,done_conditions:input.done_conditions},refs=this.refs(spec);
+    const spec:Spec=taskSpecSchema.parse({goal:input.goal,owner:input.owner,dependencies:input.dependencies,input_versions:input.input_versions,
+      done_conditions:input.done_conditions,...(input.unit!==undefined?{unit:input.unit}:{})}),refs=this.refs(spec);
     const id=crypto.randomUUID();
-    const data:Bundle={task:{id,room_id:ROOM,creator_id:this.principal,owner_id:spec.owner,goal:spec.goal,dependencies:spec.dependencies,input_versions:spec.input_versions,done_conditions:spec.done_conditions,state:'open',version:1,current_submission_id:null,cancel_reason:null,created_at_ms:0,updated_at_ms:0,stop_confirmation:'unavailable_no_runner'},lease:{task_id:id,holder_id:null,lease_epoch:0,expires_at_ms:0},submission:null,server_time_ms:0,lease_active:false};
+    const data:Bundle={task:{id,room_id:ROOM,creator_id:this.principal,owner_id:spec.owner,goal:spec.goal,dependencies:spec.dependencies,input_versions:spec.input_versions,done_conditions:spec.done_conditions,
+      ...(spec.unit?{unit:spec.unit}:{}),state:'open',version:1,current_submission_id:null,cancel_reason:null,created_at_ms:0,updated_at_ms:0,stop_confirmation:'unavailable_no_runner'},lease:{task_id:id,holder_id:null,lease_epoch:0,expires_at_ms:0},submission:null,server_time_ms:0,lease_active:false};
     return planMutation(this.db,this.principal,this.access,'task.create',input.idempotency_key,input,{},id,1,refs,this.effects('create',spec),true,async()=>{if(!await this.check(refs))throw new Fault('INVALID_RELATION','Owner/dependency/input revision must be authorized in this room.');},{result:this.snapshot(data,'create'),audit:'task_audit'});
   }
   async planAction(action:Action,input:TaskAction) {
     await this.access(input.room,true);
+    const execution=action==='submit'?await this.executionSubmission(input):null;
     const before=(await this.get(input)).data,task={...before.task,version:input.expected_version+1},lease={...before.lease};
     let authority=this.role('agent');
     if(action==='approve') authority=this.role('user');
@@ -264,6 +339,7 @@ export class Tasks {
         data.changes_requested={submission_id:input.submission_id,reviewer_id:this.principal,reason:input.reason};
       }
     }
+    if(execution)add(execution.sql,...execution.args);
     guard.sql+=')';
     return planMutation(this.db,this.principal,this.access,'task.'+action,input.idempotency_key,input,{},task.id,task.version,guard,this.effects(action,undefined,action==='claim'?task.id:undefined),true,async()=>{
       const current=(await this.get(input)).data;
@@ -279,6 +355,7 @@ export class Tasks {
         if(unmet.length) throw new Fault('DEPENDENCY_CONFLICT','Dependencies are not done.',409,'not_applied',false,{dep_ids:unmet});
         if(current.task.state!=='open'&&current.task.state!=='blocked'&&(current.task.state!=='in_progress'||current.lease_active))throw new Fault('TASK_CONFLICT','Task is not claimable.',409);
       }
+      if(action==='submit'&&execution&&!await this.check(execution))throw new Fault('LEASE_CONFLICT','Execution authority changed before task submission.',409,'not_applied');
       if(action==='submit')throw new Fault('INVALID_RELATION','Artifact revision must be in this room and authored by the holder.');
       if(action==='cancel'||action==='approve'||action==='request_changes')throw new Fault('TASK_CONFLICT','State or exact current submission does not match.',409);
     },{authority,result:this.snapshot(data,action),audit:'task_audit'});

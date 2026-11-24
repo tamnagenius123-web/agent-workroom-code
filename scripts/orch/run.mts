@@ -7,8 +7,10 @@ import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { digest, runDriver, type DriverOptions, type Envelope, type RequestOptions } from './driver.ts';
 import { acquireJournalLock } from './journal-lock.ts';
+import { createLocalNativeHook } from './native-execution.ts';
 
-interface Cli { execute: boolean; help: boolean; journal: string; maxTasks: number; runtime: number; heartbeat: number; context: number }
+interface Cli { execute: boolean; help: boolean; journal: string; maxTasks: number; runtime: number; heartbeat: number; context: number;
+  nativeSpec?: string; nativeSha?: string; nativeRepository?: string; nativeRoot?: string }
 function parse(args: string[]): Cli {
   const out: Cli = { execute: false, help: false, journal: '.cache/orch/worker.json', maxTasks: 1, runtime: 180_000, heartbeat: 8000, context: 4000 };
   for (let i = 0; i < args.length; i++) {
@@ -22,8 +24,14 @@ function parse(args: string[]): Cli {
     else if (name === '--max-runtime-ms') out.runtime = Number(value);
     else if (name === '--heartbeat-ms') out.heartbeat = Number(value);
     else if (name === '--context-budget-chars') out.context = Number(value);
+    else if (name === '--native-spec') out.nativeSpec = value;
+    else if (name === '--native-spec-sha256') out.nativeSha = value;
+    else if (name === '--native-repository') out.nativeRepository = value;
+    else if (name === '--native-root') out.nativeRoot = value;
     else throw new Error('invalid_arguments');
   }
+  const native = [out.nativeSpec, out.nativeSha, out.nativeRepository, out.nativeRoot];
+  if (native.some(Boolean) && (!native.every(Boolean) || !/^[a-f0-9]{64}$/.test(out.nativeSha!) || out.maxTasks !== 1)) throw new Error('invalid_native_arguments');
   return out;
 }
 async function readJSON(response: Response): Promise<unknown> {
@@ -49,7 +57,7 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
   let cli: Cli;
   try { cli = parse(args); } catch { process.stderr.write('invalid_arguments\n'); return 2; }
   if (cli.help) {
-    process.stdout.write('Usage: node --import tsx scripts/orch/run.mts [--execute] [--journal PATH] [--max-tasks 1..20] [--max-runtime-ms 1..600000] [--heartbeat-ms 1..10000] [--context-budget-chars 500..8000]\nRequired only with --execute: WORKROOM_URL and WORKROOM_TOKEN_FILE. The token file is read only at execution time; the service holds the provider key. Linux/POSIX flock is required. The default is an offline plan. Use a separate journal per worker; preserve it on restart. No task approval or deployment is performed.\n');
+    process.stdout.write('Usage: node --import tsx scripts/orch/run.mts [--execute] [--journal PATH] [--max-tasks 1..20] [--max-runtime-ms 1..600000] [--heartbeat-ms 1..10000] [--context-budget-chars 500..8000]\nOptional native lane (one task): --native-spec FILE --native-spec-sha256 APPROVED_SHA256 --native-repository PATH --native-root PATH_OUTSIDE_REPOSITORY. Only frozen data checks are supported; arbitrary candidate execution requires a separate approved sandbox and is rejected. Local branch/check evidence is separate from model output; no push or independent verdict is performed.\nRequired only with --execute: WORKROOM_URL and WORKROOM_TOKEN_FILE. The token file is read only at execution time; the service holds the provider key. Linux/POSIX flock is required. The default is an offline plan. Use a separate journal per worker; preserve it on restart. No task approval or deployment is performed.\n');
     return 0;
   }
   const options: DriverOptions = { execute: cli.execute, endpoint_sha256: '0'.repeat(64),
@@ -79,6 +87,8 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
   catch { process.stderr.write('journal_locked_or_unavailable\n'); return 2; }
   let queue = Promise.resolve();
   try {
+    const native = cli.nativeSpec ? await createLocalNativeHook({ spec_path: cli.nativeSpec, approved_sha256: cli.nativeSha!,
+      repository: cli.nativeRepository!, root: cli.nativeRoot! }) : undefined;
     const rest = async (method: 'GET' | 'POST', path: string, body?: unknown, requestOptions: RequestOptions = {}): Promise<Envelope> => {
       // Paths come only from driver code; never follow service redirects with credentials.
       const target = new URL(path, origin);
@@ -94,6 +104,7 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
       return result;
     };
     const summary = await runDriver(options, {
+      ...(native ? { native } : {}),
       rest,
       mcp: async (name, input, requestOptions = {}) => {
         const signal = AbortSignal.any([lock.signal, AbortSignal.timeout(10_000), ...(requestOptions.signal ? [requestOptions.signal] : [])]);

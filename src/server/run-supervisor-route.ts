@@ -5,6 +5,7 @@ import { Fault } from './contracts.ts';
 import type { Workroom } from './domain.ts';
 import { budgetCapUsdMicros, type DispatchEnv } from './dispatch-wire.ts';
 import { reconcileRunCost } from './execution-cost.ts';
+import { nativeSubmitSchema, submitNative } from './native-submission.ts';
 import {
   getRunStatus, heartbeatRun, interruptRun,
   EXECUTION_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, LIVE_MODEL,
@@ -83,6 +84,7 @@ function runPayload(
       receipt_id: report.receipt_id,
       fetches: report.fetches,
       trace: report.trace,
+      ...(report.blocking_run_id ? { blocking_run_id: report.blocking_run_id } : {}),
       check_kind: 'execution_self_check',
       task_approved: false,
     },
@@ -105,6 +107,13 @@ export async function executionRunRoute(
   if (room !== ROOM) throw new Fault('INVALID_INPUT', 'G1/G2 execution runs are bound to room_main.');
   let tail: string | undefined;
   try { tail = match[2] ? decodeURIComponent(match[2]) : undefined; } catch { throw new Fault('INVALID_INPUT', 'Execution run path is not valid.'); }
+
+  if (tail === 'native-submit') {
+    if (request.method !== 'POST') throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);
+    // Native publication consumes a settled run and never calls the provider.
+    // Its strict schema owns the exact retry key; identity comes from service.
+    return submitNative(service, nativeSubmitSchema.parse(await readJSON()));
+  }
 
   if (tail === 'reconcile') {
     if (request.method !== 'POST') throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);

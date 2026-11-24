@@ -98,9 +98,9 @@ These commands require no service credentials and perform no network call. An
 actual invocation requires `--execute`, `WORKROOM_URL`, and `WORKROOM_TOKEN_FILE`
 in the process environment. The token is read from that file only at execution
 time; its value is not a command-line argument or an environment value. The
-OpenRouter key remains in the service. The CLI
-does not print credentials or the service URL. Execution is not run by this
-change's tests or documentation.
+OpenRouter key remains in the service. The CLI does not print credentials or
+the service URL. These tests use synthetic transports and do not invoke a live
+service or provider.
 
 The driver uses existing MCP tools for `task_claim_next` and `context_pack`,
 which do not have corresponding REST endpoints. It uses existing REST routes
@@ -142,6 +142,21 @@ heartbeats. A different generation causes HOLD instead of adoption. Completed
 execution is submitted through the existing task engine with disposition
 `review`, exact artifact version and an idempotency key. It is never automatically
 evaluated or approved by its own author.
+
+The submission also carries the exact run, attempt, intent revision and cancel
+generation. The task engine checks these inside its submission transaction.
+Pending submissions replay before any renewal, model call or native step. The
+host validates and retains the historical submission receipt, then reads the
+current task and exact current submission together. A superseded or canceled
+submission remains HOLD. Legacy journals without the execution binding are not
+silently rewritten or replayed. A normally approved task with the same exact
+submission still matches; a new execution lease is not required for this read.
+
+For explicit immutable builder units, see [task-lease-recovery-v1.md](task-lease-recovery-v1.md)
+and [native-execution-v1.md](native-execution-v1.md). The latter documents the
+four opt-in CLI flags, host-approved UnitSpec, supported checks, isolated local
+Git repository, and durable native receipt. It keeps remote push, arbitrary
+candidate execution, independent review and live operation as distinct gates.
 
 ## Bounds and operating constraints
 

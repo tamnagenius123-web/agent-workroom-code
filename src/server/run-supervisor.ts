@@ -6,6 +6,7 @@ import { sha256 } from '../auth/crypto.ts';
 import { z } from 'zod';
 import {
   sendReservedChat, estimateMicroUsd, getGenerationCost, loadRoster, reservationMicroUsd, OpenRouterError,
+  COUNTED_HOLD_STATES,
   type ChatUsage, type FetchLike, type SettleInput,
 } from '../or-harness/client.ts';
 import type { Database } from './db.ts';
@@ -88,6 +89,8 @@ export interface RunReport {
   receipt_id: string;
   trace: TraceEvent[];
   fetches: number;
+  /** Prior task effect must be reconciled; a new run is not a recovery key. */
+  blocking_run_id?: string;
 }
 
 export interface InterruptInput {
@@ -153,6 +156,11 @@ export interface RunStatusView {
   tokens: unknown;
   execution_generation: number | null;
   check_kind: 'execution_self_check';
+  /** A current read observation, not a transferable capability or past verdict. */
+  authority: {
+    authorized: boolean; observed_at_ms: number; cancel_generation: number;
+    intent_revision: number; lease_epoch: number | null; task_state: string | null;
+  };
 }
 
 interface Bound {
@@ -279,7 +287,7 @@ async function readTaskAndIntent(db: Database, taskId: string): Promise<{ task: 
 }
 
 /** Authority is rechecked inside the same D1 transaction as effects or finalization. */
-function authorityPredicate(input: Pick<RunInput, 'task_id' | 'principal' | 'lease_epoch' | 'intent_revision' | 'cancel_generation'>): { sql: string; args: (string | number)[] } {
+export function authorityPredicate(input: Pick<RunInput, 'task_id' | 'principal' | 'lease_epoch' | 'intent_revision' | 'cancel_generation'>): { sql: string; args: (string | number)[] } {
   return {
     sql: `EXISTS (SELECT 1 FROM tasks t JOIN task_leases l ON l.task_id=t.id
       JOIN principals p ON p.id=l.holder_id JOIN memberships m ON m.principal_id=p.id AND m.room_id=t.room_id
@@ -732,6 +740,25 @@ async function superviseOwnedRun(db: Database, input: ActiveRunInput): Promise<R
     }
     const epochOk = task.state === 'in_progress' && task.holder_id === input.principal
       && task.lease_epoch === input.lease_epoch && task.expires_at_ms > task.server_time_ms;
+    if (epochOk && intent === input.intent_revision && task.authority_active && task.dependencies_ready && task.inputs_current) {
+      // A new host may reclaim the task after its task and execution leases
+      // expire. Those leases serialize local writers; they cannot erase an
+      // earlier provider effect. Check under the task execution fence before
+      // creating another run or reservation. The original run remains the
+      // recovery identity, including when another principal now holds the task.
+      const unresolved = await db.prepare(`SELECT r.run_id FROM execution_runs r
+        WHERE r.task_id=? AND r.run_id<>? AND (
+          r.state NOT IN ('settled','canceled','rejected') OR EXISTS (
+            SELECT 1 FROM budget_reservations b WHERE b.run_id=r.run_id
+              AND b.state IN (${COUNTED_HOLD_STATES.map(() => '?').join(',')})))
+        ORDER BY r.created_at,r.run_id LIMIT 1`)
+        .bind(input.task_id, input.run_id, ...COUNTED_HOLD_STATES).first<{ run_id: string }>();
+      if (unresolved) return {
+        state: 'held', failure: 'prior_task_run_unresolved', disposition: 'UNKNOWN',
+        generation_id: null, reservation_id: null, artifact_id: null, receipt_id: '', trace: [], fetches: 0,
+        blocking_run_id: unresolved.run_id,
+      };
+    }
     trace.push(event(input, 'claim', epochOk, epochOk ? 'held' : 'stale_epoch'));
     await save(db, input, bound, epochOk ? 'claimed' : 'rejected', epochOk ? null : 'stale_epoch', trace, ids);
     await saveCheckpoint(db, input, epochOk ? 'claimed' : 'rejected');
@@ -1177,6 +1204,26 @@ export async function getRunStatus(db: Database, runId: string): Promise<RunStat
   }
   const currentLease = await getUnitLease(db, `execution/run/${encodeURIComponent(runId)}`);
   const active = leaseLive(currentLease, await executionNow(db));
+  const auth = authorityPredicate({ task_id: row.task_id, principal: row.principal_id,
+    lease_epoch: row.lease_epoch, intent_revision: row.intent_revision, cancel_generation: row.cancel_generation });
+  // Terminal execution is historical evidence. A local host still needs current
+  // task/cancellation authority before consuming that artifact in another step.
+  // Observe all authority fields together, and reject a run that changed since
+  // the status read. Local effects must recheck this observation at each bound.
+  const authority = await db.prepare(`SELECT
+      (${auth.sql} AND EXISTS (SELECT 1 FROM execution_runs r WHERE r.run_id=?
+        AND r.attempt_id=? AND r.principal_id=? AND r.lease_epoch=? AND r.intent_revision=?
+        AND r.cancel_generation=? AND r.state=? AND r.generation_id IS ? AND r.artifact_id IS ?)) AS authorized,
+      ${DB_NOW} AS observed_at_ms,
+      COALESCE((SELECT generation FROM execution_cancels WHERE task_id=?),0) AS cancel_generation,
+      COALESCE((SELECT MAX(version) FROM intent_versions),0) AS intent_revision,
+      (SELECT lease_epoch FROM task_leases WHERE task_id=?) AS lease_epoch,
+      (SELECT state FROM tasks WHERE id=?) AS task_state`)
+    .bind(...auth.args, row.run_id, row.attempt_id, row.principal_id, row.lease_epoch, row.intent_revision,
+      row.cancel_generation, row.state, row.generation_id, row.artifact_id, row.task_id, row.task_id, row.task_id)
+    .first<{ authorized: number; observed_at_ms: number; cancel_generation: number;
+      intent_revision: number; lease_epoch: number | null; task_state: string | null }>();
+  if (!authority) throw new Fault('NOT_AVAILABLE', 'Current execution authority could not be observed.', 503);
   return {
     run_id: row.run_id,
     attempt_id: row.attempt_id,
@@ -1201,6 +1248,7 @@ export async function getRunStatus(db: Database, runId: string): Promise<RunStat
     tokens,
     execution_generation: active ? currentLease!.generation : null,
     check_kind: 'execution_self_check',
+    authority: { ...authority, authorized: authority.authorized === 1 },
   };
 }
 

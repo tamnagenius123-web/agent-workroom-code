@@ -28,6 +28,21 @@ task renewal action for its version and audit behavior, and requires the stored
 run epoch. An active invocation also requires its pinned execution generation.
 Only explicit resume can move a run to a new task epoch or execution attempt.
 
+The status read reports current `authority` separately from the historical run
+outcome. A settled run does not regain authority after cancellation, role loss,
+input changes, intent changes, or lease expiry. This read is an observation;
+the effect-time transaction still decides whether publication is allowed.
+
+Text submissions produced by the host carry an explicit execution binding in
+the existing task-submit request. The same D1 write checks the exact settled
+run/attempt, original artifact revision, authenticated author, immutable task
+specification, receipt, intent, cancellation generation, dependencies, and input
+revisions. Ordinary manual task submissions retain their existing contract;
+this optional binding is not a claim that every generic task submission proves
+execution provenance. Native evidence uses the separate fenced `native-submit`
+adapter, which publishes through the existing message and task engines and
+stores a server-only acceptance marker in the submission transaction.
+
 ## External effects and recovery
 
 The supervisor records `sending` and a counted unknown hold before provider
@@ -45,6 +60,13 @@ the modeled checkpoint. The crash window between those two writes is recovered
 without a second chat request. Generationless uncertainty remains held and
 requires provider-side reconciliation evidence; a fresh attempt is not an
 automatic recovery strategy.
+
+This boundary also applies across hosts. A newly claimed task and fresh run ID
+cannot bypass another run's nonterminal execution or counted budget hold. The
+supervisor checks that task history while holding its execution fence and stops
+before creating a replacement run or reservation. It returns the original
+blocking run ID for reconciliation. The host retains its exact unsent envelope;
+it does not adopt another principal's run or settle that principal's ledger.
 
 Model text is the artifact, rather than a hash presented as its content. The
 artifact ID is deterministic for the run; publication and the run pointer are
@@ -67,6 +89,10 @@ model, cost field, amount, and token receipt. Conflicting actuals are rejected.
 Reserved estimates and actual costs remain distinct. An actual cost over the
 reservation is recorded rather than erased; that flag alone is not a statement
 about the total wallet cap. UNKNOWN and pending-actual holds remain counted.
+Decimal amounts are parsed with integer arithmetic: reservations round upward
+and actuals use half-up quantization to integer micro-dollars. Sub-micro-dollar
+detail is not represented losslessly. Neither an estimate nor its reservation
+is asserted to be a proved upper bound on the provider's eventual charge.
 
 One inherited identity limitation remains explicit: `provider_account` is
 currently populated from OpenRouter's upstream `provider_name`. It is not an
@@ -99,13 +125,23 @@ for the reviewer manifest, retained failures, bounded host journal, and CLI.
 See [context-delivery-v1.md](context-delivery-v1.md) for mandatory standing
 context, source revisions, serialized response budgets, and token UNKNOWN.
 
-The new driver performs a bounded text execution and submits the resulting
+The default driver performs a bounded text execution and submits the resulting
 artifact for review. Its in-worker tool step is a deterministic content hash.
-It does not implement a general code-editing tool loop, automatic repository
-commit/push, or a new executable test runner. The reviewer evidence endpoint
+The opt-in [native adapter](native-execution-v1.md) additionally applies strict
+file-write actions in an independent local Git repository, creates a real local
+commit, and runs host-frozen syntax and data checks at that exact head and tree.
+It rejects unsupported required checks before provider dispatch. It does not
+execute arbitrary candidate programs, provide a general multi-turn tool loop,
+push a repository, or supply an independent verdict. The reviewer endpoint
 checks identity, binding, completeness, and evidence digests; it does not execute
 the submitted command or prove natural-language completion conditions. These
 limits must remain visible in roadmap acceptance records.
+
+After an accepted submission response is lost, both host paths replay only the
+durably stored request. They preserve the historical receipt and separately
+check the exact current task submission before reporting completion. A later
+cancel or request for changes remains HOLD. Legacy text journals missing the
+execution binding remain held without rewriting the request under its old key.
 
 Reproduction uses synthetic transports and local D1. The relevant regressions
 include concurrent starts, same-holder token return races, stale transactional

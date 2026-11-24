@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { digest, runDriver, type DriverIO, type DriverJournal, type Envelope, type RunEnvelope } from '../scripts/orch/driver.ts';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createLocalNativeHook, nativeEnvironment } from '../scripts/orch/native-execution.ts';
+import { nativeTaskDigest, type NativeUnit } from '../scripts/orch/native-contract.ts';
+import { digest, DriverHold, runDriver, type DriverIO, type DriverJournal, type Envelope, type RunEnvelope } from '../scripts/orch/driver.ts';
 
 const ENDPOINT = digest('https://synthetic-workroom.invalid');
 const ok = (data: unknown, meta: Record<string, unknown> = {}): Envelope => ({ ok: true, data, meta });
@@ -21,7 +27,8 @@ function fixture(mode: 'normal' | 'lost' | 'cost_unknown' | 'changed_generation'
   const bundle = {
     task: { id: 'task-driver', room_id: 'room_main', owner_id: null, goal: 'Summarize the pinned input accurately',
       dependencies: [], input_versions: [{ message_id: 'source-driver', revision: 1 }],
-      done_conditions: ['The pinned facts are preserved'], state: 'in_progress', version: 2 },
+      done_conditions: ['The pinned facts are preserved'], state: 'in_progress', version: 2,
+      current_submission_id: null as string | null },
     lease: { task_id: 'task-driver', holder_id: 'synthetic:driver', lease_epoch: 1, expires_at_ms: Date.now() + 30_000 },
     server_time_ms: Date.now(), lease_active: true,
   };
@@ -102,6 +109,11 @@ function fixture(mode: 'normal' | 'lost' | 'cost_unknown' | 'changed_generation'
         assert.equal(body?.disposition, 'review');
         assert.equal(body?.expected_version, bundle.task.version);
         submissions++; bundle.task.version++; bundle.task.state = 'review'; bundle.lease_active = false;
+        const submission = { id: 'submission-driver', task_id: bundle.task.id, actor_id: 'synthetic:driver',
+          lease_epoch: body!.lease_epoch, artifact_message_id: body!.artifact_message_id,
+          artifact_revision: body!.artifact_revision, disposition: 'review' };
+        bundle.task.current_submission_id = submission.id;
+        Object.assign(bundle, { submission, submitted: submission });
         const value = ok(structuredClone(bundle)); submitted.set(key, value);
         if (mode === 'submit_lost' && !submitLost) { submitLost = true; throw new Error('submission response lost'); }
         return value;
@@ -113,6 +125,102 @@ function fixture(mode: 'normal' | 'lost' | 'cost_unknown' | 'changed_generation'
     counts: () => ({ starts, resumes, reconciles, beats, submissions }), bundle };
 }
 const options = { execute: true, endpoint_sha256: ENDPOINT, heartbeat_ms: 8000 };
+
+test('native contract rejection prevents provider dispatch instead of silently falling back to text-only execution', async () => {
+  const f = fixture();
+  const io = Object.assign(f.io, { native: {
+    prepare: async (): Promise<never> => { throw new DriverHold('native_contract_not_authorized'); },
+    execute: async (): Promise<never> => { throw new Error('not reached'); },
+  } });
+  const result = await runDriver(options, io);
+  assert.equal(result.disposition, 'HOLD');
+  assert.equal(result.reason, 'native_contract_not_authorized');
+  assert.equal(f.counts().starts, 0);
+});
+
+test('native USD and total-token bounds reject before the first provider POST', async () => {
+  for (const [budget, reason] of [
+    [{ max_micro_usd: 0, max_total_tokens: 4096 }, 'native_reservation_exceeds_unit_budget'],
+    [{ max_micro_usd: 1000000, max_total_tokens: 1 }, 'native_estimated_tokens_exceed_unit_budget'],
+  ] as const) {
+    const f = fixture();
+    f.io.native = { prepare: async () => ({ spec_sha256: 'a'.repeat(64), task_spec_sha256: nativeTaskDigest(f.bundle.task),
+      prompt: 'Frozen synthetic native contract', model: 'z-ai/glm-5.3-flash', max_tokens: 1024, max_wall_ms: 60000, ...budget }),
+      execute: async (): Promise<never> => { throw new Error('must not execute'); } };
+    const result = await runDriver(options, f.io);
+    assert.equal(result.reason, reason); assert.equal(f.counts().starts, 0);
+  }
+});
+
+async function nativeDriverCase(replayState: 'review' | 'canceled') {
+  const f = fixture(), dir = await mkdtemp(join(tmpdir(), 'workroom-native-driver-'));
+  try {
+    const source = join(dir, 'source'), root = join(dir, 'runs'); await mkdir(source); await mkdir(root);
+    const original = 'export const answer = 1;\n', changed = 'export const answer = 42;\n';
+    await writeFile(join(source, 'answer.mjs'), original);
+    const git = (...args: string[]) => execFileSync('/usr/bin/git', ['-c', 'core.hooksPath=/dev/null', ...args],
+      { cwd: source, encoding: 'utf8', env: nativeEnvironment(dir) }).trim();
+    git('init', '--quiet', '--template='); git('add', '--', 'answer.mjs'); git('commit', '--quiet', '-m', 'synthetic base');
+    f.bundle.task.goal = 'Set answer to 42'; f.bundle.task.done_conditions = ['Frozen data checks succeed'];
+    Object.assign(f.bundle.task, { unit: { kind: 'builder', lease_ms: 2400000 } });
+    const unit: NativeUnit = { contract: 'workroom.native-unit.v1', id: 'NATIVE-DRIVER', title: 'Driver synthetic unit', lane: 'test',
+      spec_md: 'Change the literal; never run the candidate.', lineage: ['INFERRED'], deps: [], verifier: 'synthetic:reviewer',
+      principal_id: 'synthetic:driver', task_id: f.bundle.task.id, task_spec_sha256: nativeTaskDigest(f.bundle.task),
+      model: 'z-ai/glm-5.3-flash', base_sha: git('rev-parse', 'HEAD'), approval_ref: 'synthetic test fixture only',
+      read_paths: ['answer.mjs'], write_paths: ['answer.mjs'], acceptance: [
+        { id: 'syntax', cmd: ['node', '--check', 'answer.mjs'], expect: 'exit0', scope: 'touched', timeout_ms: 5000 },
+        { id: 'answer', cmd: ['workroom', 'text-equals', 'answer.mjs', changed], expect: 'exit0', scope: 'full', timeout_ms: 5000 }],
+      budget: { usd_max: 1, tokens_max: 4096, wall_s: 60, max_actions: 1, max_write_bytes: 4096 } };
+    const raw = JSON.stringify(unit), file = join(dir, 'unit.json'); await writeFile(file, raw);
+    f.io.native = await createLocalNativeHook({ spec_path: file, approved_sha256: digest(raw), repository: source, root });
+    const transport = f.io.rest, submissions: unknown[] = [];
+    let accepted: Envelope | null = null;
+    f.io.rest = async (...args) => {
+      if (args[1].endsWith('/execution-runs/native-submit')) {
+        const request = args[2] as { receipt_json: string; expected_version: number; run_id: string; task_id: string };
+        submissions.push(structuredClone(request));
+        if (accepted) { assert.deepEqual(submissions[0], request); return ok({ ...(accepted.data as object),
+          current_task_state: f.bundle.task.state, current_submission_matches: f.bundle.task.state === 'review' }); }
+        assert.equal(request.expected_version, f.bundle.task.version);
+        const receipt = JSON.parse(request.receipt_json);
+        assert.equal(receipt.status, 'LOCAL_CHECKS_PASSED'); assert.equal(receipt.checks.length, 2);
+        assert.equal(receipt.model_artifact_id, 'artifact-driver'); assert.notEqual(receipt.head_sha, unit.base_sha);
+        assert.equal(receipt.actual_tokens.total, 30); assert.equal(receipt.independent_verdict, 'NOT_RUN');
+        accepted = ok({ accepted_for_review: true, run_id: request.run_id, task_id: request.task_id,
+          artifact_id: 'native-artifact', submission_id: 'native-submission', head_sha: receipt.head_sha,
+          receipt_sha256: digest(request.receipt_json), current_task_state: 'review', current_submission_matches: true });
+        f.bundle.task.state = 'review'; f.bundle.lease_active = false;
+        throw new Error('lost accepted native submission response');
+      }
+      const response = await transport(...args);
+      if (args[1].includes('/messages/artifact-driver/history')) return ok({ message_id: 'artifact-driver', revisions: [{
+        message_id: 'artifact-driver', room_id: 'room_main', actor_id: 'synthetic:driver', version: 1,
+        text: JSON.stringify({ contract: 'workroom.native-actions.v1', spec_sha256: digest(raw), actions: [
+          { tool: 'write_file', path: 'answer.mjs', before_sha256: digest(original), content: changed }] }),
+      }] });
+      if (args[0] === 'GET' && /\/execution-runs\//.test(args[1]) && response.ok) return ok({ ...(response.data as object),
+        principal_id: 'synthetic:driver', tokens: { prompt: 10, completion: 20, total: 30 },
+        authority: { authorized: true, lease_epoch: 1, intent_revision: 3, cancel_generation: 0 } });
+      return response;
+    };
+    const first = await runDriver(options, f.io);
+    assert.equal(first.disposition, 'HOLD'); assert.equal(submissions.length, 1);
+    f.bundle.task.state = replayState;
+    const restarted = await runDriver(options, f.io);
+    assert.equal(restarted.disposition, replayState === 'review' ? 'AWAITING_REVIEW' : 'HOLD');
+    assert.equal(restarted.completed, replayState === 'review' ? 1 : 0);
+    if (replayState === 'canceled') {
+      assert.equal(restarted.reason, 'native_submission_no_longer_current');
+      assert.equal(f.journal.attempts[0]!.native_submission_result!.accepted_for_review, true);
+      assert.equal(f.journal.attempts[0]!.native_submission_result!.current_submission_matches, false);
+    }
+    assert.equal(submissions.length, 2); assert.equal(f.counts().starts, 1); assert.equal(f.counts().submissions, 0);
+    assert.equal(f.calls.includes('workroom_message_post'), false);
+    assert.equal(await readFile(join(source, 'answer.mjs'), 'utf8'), original);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}
+test('fake-provider driver executes actual local data checks and replays one fenced submission after a lost response', () => nativeDriverCase('review'));
+test('historical native submission replay preserves evidence but stays held after task cancellation', () => nativeDriverCase('canceled'));
 
 test('the default plan does not load credentials, mutate a journal, or call a service', async () => {
   let called = 0;
@@ -168,6 +276,30 @@ test('explicit zero-effect capacity denial preserves the same request for a late
   assert.equal(f.counts().submissions, 1);
 });
 
+test('a prior task effect holds admission with its original recovery identity and no replacement run', async () => {
+  const f = fixture(), transport = f.io.rest;
+  const requests: unknown[] = [];
+  f.io.rest = async (...args) => {
+    if (args[0] === 'POST' && args[1].endsWith('/execution-runs')) {
+      requests.push(structuredClone(args[2]));
+      return ok({ state: 'held', failure: 'prior_task_run_unresolved', disposition: 'UNKNOWN',
+        blocking_run_id: 'original-other-host-run', fetches: 0,
+        reservation_id: null, generation_id: null, artifact_id: null, receipt_id: '' });
+    }
+    return transport(...args);
+  };
+  const first = await runDriver(options, f.io), second = await runDriver(options, f.io);
+  assert.equal(first.reason, 'prior_task_run_unresolved');
+  assert.equal(second.reason, 'prior_task_run_unresolved');
+  assert.equal(f.journal.attempts[0]!.report!.blocking_run_id, 'original-other-host-run');
+  assert.equal(f.journal.attempts[0]!.phase, 'ready');
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(f.journal.attempts.length, 1);
+  assert.equal(f.counts().starts, 0);
+  assert.equal(f.counts().reconciles, 0, 'another principal cannot reconcile the original author ledger');
+  assert.equal(f.counts().submissions, 0);
+});
+
 test('known-generation cost recovery uses the same run and the zero-chat reconciliation endpoint', async () => {
   const f = fixture('cost_unknown');
   const result = await runDriver(options, f.io);
@@ -197,6 +329,49 @@ test('a lost task submission response replays the exact key without executing ag
   const second = await runDriver(options, f.io);
   assert.equal(second.disposition, 'AWAITING_REVIEW');
   assert.equal(f.counts().starts, 1); assert.equal(f.counts().submissions, 1);
+});
+
+test('text submission carries the exact execution binding into the server mutation', async () => {
+  const f = fixture(), transport = f.io.rest;
+  f.io.rest = async (...args) => {
+    if (args[1].endsWith('/tasks/task-driver/submit')) {
+      const envelope = f.journal.attempts[0]!.envelope!;
+      assert.deepEqual((args[2] as Record<string, unknown>).execution, { run_id: envelope.run_id,
+        attempt_id: envelope.attempt_id, intent_revision: envelope.intent_revision, cancel_generation: envelope.cancel_generation });
+    }
+    return transport(...args);
+  };
+  assert.equal((await runDriver(options, f.io)).disposition, 'AWAITING_REVIEW');
+  assert.equal(f.counts().submissions, 1);
+});
+
+test('historical text submission replay does not present a subsequently canceled task as current review work', async () => {
+  const f = fixture('submit_lost'), requests: unknown[] = [], transport = f.io.rest;
+  f.io.rest = async (...args) => {
+    if (args[1].endsWith('/tasks/task-driver/submit')) requests.push(structuredClone({ body: args[2], key: args[3]?.key }));
+    return transport(...args);
+  };
+  assert.equal((await runDriver(options, f.io)).disposition, 'HOLD');
+  f.bundle.task.state = 'canceled';
+  Object.assign(f.bundle.task, { current_submission_id: null }); Object.assign(f.bundle, { submission: null });
+  const second = await runDriver(options, f.io);
+  assert.equal(second.reason, 'text_submission_no_longer_current');
+  assert.equal(second.disposition, 'HOLD'); assert.equal(second.completed, 0);
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(f.counts().starts, 1); assert.equal(f.counts().submissions, 1);
+});
+
+test('legacy unbound pending text submission is held without changing or replaying its request', async () => {
+  const f = fixture('submit_lost');
+  assert.equal((await runDriver(options, f.io)).disposition, 'HOLD');
+  const journal = structuredClone(f.journal), body = journal.attempts[0]!.submission!.body;
+  Reflect.deleteProperty(body, 'execution'); f.setJournal(journal);
+  const before = f.calls.filter(call => call.endsWith('/tasks/task-driver/submit')).length;
+  const second = await runDriver(options, f.io);
+  assert.equal(second.reason, 'legacy_submission_binding_missing');
+  assert.deepEqual(f.journal.attempts[0]!.submission!.body, body);
+  assert.equal(f.calls.filter(call => call.endsWith('/tasks/task-driver/submit')).length, before);
+  assert.equal(f.counts().starts, 1);
 });
 
 test('foreign or unavailable pinned revision stops before provider execution', async () => {

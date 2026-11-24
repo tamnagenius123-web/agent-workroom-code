@@ -227,7 +227,7 @@ export function rosterCapMicros(defaults: Roster['project_defaults'], project: s
   return Number(units / divisor);
 }
 
-function promptTokenEstimate(promptChars: number): number {
+export function promptTokenEstimate(promptChars: number): number {
   if (!Number.isSafeInteger(promptChars) || promptChars < 0) throw new Error('promptChars must be a non-negative integer');
   return Math.ceil(promptChars / 3) + 16;
 }

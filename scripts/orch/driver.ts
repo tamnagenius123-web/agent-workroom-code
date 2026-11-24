@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { estimateMicroUsd, promptTokenEstimate, reservationMicroUsd } from '../../src/or-harness/client.ts';
+import { nativeTaskDigest, type NativeBinding, type NativeDriverHook } from './native-contract.ts';
+import { NativeHold } from './native-execution.ts';
 
 // Client limits are an extra bound. The authenticated server remains the only
 // task/lease/intent/cost/effect authority and independently checks its limits.
@@ -8,14 +11,16 @@ const ROOM = 'room_main';
 const ROOT = `/api/v1/rooms/${ROOM}`;
 const str = z.string().min(1);
 const integer = z.number().int().nonnegative().refine(Number.isSafeInteger);
+const submissionRecordSchema = z.object({ id: str, task_id: str, actor_id: str, lease_epoch: integer.positive(),
+  artifact_message_id: str, artifact_revision: integer.positive(), disposition: z.literal('review') }).passthrough();
 const taskBundleSchema = z.object({
   task: z.object({ id: str, room_id: z.literal(ROOM), goal: str, owner_id: str.nullable(),
     dependencies: z.array(str), input_versions: z.array(z.object({ message_id: str, revision: integer.positive() })),
-    done_conditions: z.array(str).min(1), state: str, version: integer.positive() }).passthrough(),
+    done_conditions: z.array(str).min(1), state: str, version: integer.positive(), current_submission_id: str.nullable().optional() }).passthrough(),
   lease: z.object({ task_id: str, holder_id: str.nullable(), lease_epoch: integer.positive(), expires_at_ms: integer }),
-  server_time_ms: integer, lease_active: z.boolean(),
+  server_time_ms: integer, lease_active: z.boolean(), submission: submissionRecordSchema.nullable().optional(),
 }).passthrough();
-type TaskBundle = z.infer<typeof taskBundleSchema>;
+export type TaskBundle = z.infer<typeof taskBundleSchema>;
 export interface Envelope { ok: boolean; data?: unknown; meta?: Record<string, unknown>; error?: { code?: string; outcome?: string } }
 export interface RequestOptions { key?: string; signal?: AbortSignal }
 export interface DriverIO {
@@ -26,14 +31,21 @@ export interface DriverIO {
   save(journal: DriverJournal): Promise<void>;
   now?(): number;
   uuid?(): string;
+  native?: NativeDriverHook;
 }
 export interface RunEnvelope {
   schema_version: '1'; project: string; task_id: string; run_id: string; attempt_id: string;
   lease_epoch: number; intent_revision: number; cancel_generation: number;
-  prompt: string; max_tokens: number;
+  prompt: string; max_tokens: number; model?: string;
 }
 export interface Attempt {
   run_id: string; attempt_id: string; claim_key: string;
+  started_at_ms?: number;
+  native_binding?: NativeBinding;
+  native_submission?: { schema_version: '1'; run_id: string; attempt_id: string; task_id: string;
+    lease_epoch: number; intent_revision: number; cancel_generation: number; expected_version: number;
+    idempotency_key: string; receipt_json: string };
+  native_submission_result?: Record<string, unknown>;
   phase: 'claiming' | 'preparing' | 'ready' | 'sending' | 'submitting' | 'held' | 'completed' | 'idle';
   task?: TaskBundle;
   material?: { intent: unknown; pinned_inputs: unknown[]; context: unknown; context_json: string; context_sha256: string };
@@ -42,7 +54,9 @@ export interface Attempt {
   /** Exact renew/submit requests survive a lost mutation response. */
   pending_renew?: { key: string; body: { schema_version: '1'; expected_version: number; lease_epoch: number } };
   submission?: { key: string; body: { schema_version: '1'; expected_version: number; lease_epoch: number;
-    artifact_message_id: string; artifact_revision: number; disposition: 'review' } };
+    artifact_message_id: string; artifact_revision: number; disposition: 'review';
+    execution?: { run_id: string; attempt_id: string; intent_revision: number; cancel_generation: number } } };
+  submission_result?: Record<string, unknown>;
   report?: Record<string, unknown>;
   hold_reason?: string;
 }
@@ -57,9 +71,18 @@ const runEnvelopeSchema: z.ZodType<RunEnvelope> = z.object({
   schema_version: z.literal('1'), project: z.string().regex(/^[A-Za-z0-9_.-]{1,64}$/),
   task_id: journalId, run_id: journalId, attempt_id: journalId, lease_epoch: integer.positive(),
   intent_revision: integer, cancel_generation: integer, prompt: str.max(DRIVER_PROMPT_LIMIT), max_tokens: integer.min(1).max(1024),
+  model: str.max(128).optional(),
 }).strict();
 const journalAttemptSchema: z.ZodType<Attempt> = z.object({
   run_id: journalId, attempt_id: journalId, claim_key: journalKey,
+  started_at_ms: integer.optional(),
+  native_binding: z.object({ spec_sha256: journalDigest, task_spec_sha256: journalDigest, prompt: str,
+    model: str.max(128), max_tokens: integer.min(1).max(1024), max_total_tokens: integer.positive().max(1000000),
+    max_wall_ms: integer.positive().max(600000), max_micro_usd: integer }).strict().optional(),
+  native_submission: z.object({ schema_version: z.literal('1'), run_id: journalId, attempt_id: journalId, task_id: journalId,
+    lease_epoch: integer.positive(), intent_revision: integer, cancel_generation: integer, expected_version: integer.positive(),
+    idempotency_key: journalKey, receipt_json: str }).strict().optional(),
+  native_submission_result: z.record(z.string(), z.json()).optional(),
   phase: z.enum(['claiming', 'preparing', 'ready', 'sending', 'submitting', 'held', 'completed', 'idle']),
   task: taskBundleSchema.optional(),
   material: z.object({ intent: z.json(), pinned_inputs: z.array(z.json()), context: z.json(),
@@ -69,7 +92,9 @@ const journalAttemptSchema: z.ZodType<Attempt> = z.object({
     expected_version: integer.positive(), lease_epoch: integer.positive() }).strict() }).strict().optional(),
   submission: z.object({ key: journalKey, body: z.object({ schema_version: z.literal('1'), expected_version: integer.positive(),
     lease_epoch: integer.positive(), artifact_message_id: journalId, artifact_revision: integer.positive(), disposition: z.literal('review'),
+    execution: z.object({ run_id: journalId, attempt_id: journalId, intent_revision: integer, cancel_generation: integer }).strict().optional(),
   }).strict() }).strict().optional(),
+  submission_result: z.record(z.string(), z.json()).optional(),
   report: z.record(z.string(), z.json()).optional(), hold_reason: str.optional(),
 }).strict().refine(item => !item.envelope || (item.envelope.run_id === item.run_id && item.envelope.attempt_id === item.attempt_id
   && (!item.task || item.task.task.id === item.envelope.task_id)), 'Journal execution identity differs');
@@ -148,8 +173,13 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
   let completed = 0;
   let journal: DriverJournal | null = null;
   let active: Attempt | undefined;
+  let nativeTimer: ReturnType<typeof setTimeout> | undefined;
   const checkpoint = async () => { if (!journal) throw new DriverHold('journal_uninitialized'); await io.save(structuredClone(journal)); };
-  const timeCheck = () => { if (control.signal.aborted || now() >= deadline) throw new DriverHold('runtime_bound'); };
+  const timeCheck = () => {
+    if (control.signal.aborted || now() >= deadline) throw new DriverHold('runtime_bound');
+    if (active?.native_binding && !active.native_submission && (active.started_at_ms === undefined
+      || now() >= active.started_at_ms + active.native_binding.max_wall_ms)) throw new DriverHold('native_wall_bound');
+  };
   const request = async (method: 'GET' | 'POST', path: string, body?: unknown, key?: string, signal = control.signal) => {
     timeCheck();
     return data(await io.rest(method, path, body, { key, signal }));
@@ -192,6 +222,46 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
     if (active!.execution_generation !== undefined && active!.execution_generation !== generation) throw new DriverHold('execution_generation_changed');
     if (active!.execution_generation === undefined) { active!.execution_generation = generation as number; await checkpoint(); }
     return true;
+  };
+  const submitNative = async () => {
+    if (!active?.native_submission || !journal) throw new DriverHold('native_submission_missing');
+    const response = object(await request('POST', `${ROOT}/execution-runs/native-submit`, active.native_submission));
+    active.native_submission_result = z.record(z.string(), z.json()).parse(response); await checkpoint();
+    const receipt = object(JSON.parse(active.native_submission.receipt_json));
+    if (response.accepted_for_review !== true || response.run_id !== active.run_id || response.task_id !== active.envelope?.task_id
+      || response.head_sha !== receipt.head_sha || response.receipt_sha256 !== digest(active.native_submission.receipt_json)
+      || typeof response.artifact_id !== 'string' || typeof response.submission_id !== 'string') throw new DriverHold('native_submission_response_invalid');
+    if (response.current_submission_matches !== true || !['review', 'done'].includes(String(response.current_task_state))) {
+      throw new DriverHold('native_submission_no_longer_current');
+    }
+    active.phase = 'completed'; delete active.hold_reason;
+    journal.active_run_id = null; completed++; await checkpoint(); active = undefined; clearTimeout(nativeTimer);
+  };
+  const submitText = async () => {
+    if (!active?.submission || !active.envelope || !journal) throw new DriverHold('text_submission_missing');
+    const pending = active.submission, body = pending.body, envelope = active.envelope;
+    // Never add new fields under an already-used idempotency key. Historical
+    // journals without this binding require explicit reconciliation.
+    if (!body.execution) throw new DriverHold('legacy_submission_binding_missing');
+    if (digest(JSON.stringify(envelope)) !== active.envelope_sha256
+      || body.execution.run_id !== envelope.run_id || body.execution.attempt_id !== envelope.attempt_id
+      || body.execution.intent_revision !== envelope.intent_revision || body.execution.cancel_generation !== envelope.cancel_generation
+      || body.lease_epoch !== envelope.lease_epoch) throw new DriverHold('text_submission_binding_mismatch');
+    const response = object(await request('POST', `${ROOT}/tasks/${encodeURIComponent(envelope.task_id)}/submit`, body, pending.key));
+    const submitted = submissionRecordSchema.parse(response.submitted);
+    const matches = (item: z.infer<typeof submissionRecordSchema>) => item.task_id === envelope.task_id
+      && item.actor_id === journal!.principal_id && item.lease_epoch === body.lease_epoch
+      && item.artifact_message_id === body.artifact_message_id && item.artifact_revision === body.artifact_revision;
+    if (!matches(submitted)) throw new DriverHold('text_submission_response_invalid');
+    active.submission_result = z.record(z.string(), z.json()).parse(response); await checkpoint();
+    // A replay is historical evidence. The authoritative task read joins its
+    // exact current submission; acceptance itself intentionally expires lease.
+    const current = taskBundleSchema.parse(await request('GET', `${ROOT}/tasks/${encodeURIComponent(envelope.task_id)}`));
+    if (current.task.id !== envelope.task_id || !['review', 'done'].includes(current.task.state)
+      || current.task.current_submission_id !== submitted.id || current.submission?.id !== submitted.id
+      || !matches(current.submission)) throw new DriverHold('text_submission_no_longer_current');
+    active.phase = 'completed'; delete active.hold_reason;
+    journal.active_run_id = null; completed++; await checkpoint(); active = undefined; clearTimeout(nativeTimer);
   };
   const invoke = async (resume: boolean): Promise<Record<string, unknown>> => {
     const envelope = active!.envelope!;
@@ -258,10 +328,17 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
     for (let count = 0; count < maxTasks; count++) {
       timeCheck();
       if (!active) {
-        active = { run_id: `run_${uuid()}`, attempt_id: `attempt_${uuid()}`, claim_key: `orch-claim-${uuid()}`, phase: 'claiming' };
+        active = { run_id: `run_${uuid()}`, attempt_id: `attempt_${uuid()}`, claim_key: `orch-claim-${uuid()}`, phase: 'claiming', started_at_ms: now() };
         journal.attempts.push(active); journal.active_run_id = active.run_id;
         await checkpoint();
       }
+      if (active.native_submission) {
+        // Replay the exact already-journaled mutation. Its server transaction
+        // decides historical replay vs current authority, without renewing the
+        // task version or repeating native/model effects after a lost reply.
+        await submitNative(); continue;
+      }
+      if (active.submission) { await submitText(); continue; }
       if (active.phase === 'claiming' || (!active.task && active.phase === 'held')) {
         try { active.task = taskBundleSchema.parse(await tool('workroom_task_claim_next', { idempotency_key: active.claim_key })); }
         catch (e) {
@@ -301,15 +378,36 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
         }));
         active.material = { intent, pinned_inputs: pinned, context: context.value, context_json: context.json, context_sha256: context.sha256 };
         await checkpoint();
-        const prompt = assemblePrompt(active.task!, intent, pinned, context.value, maxPrompt);
+        if (io.native) {
+          if (active.started_at_ms === undefined) throw new DriverHold('native_start_time_missing');
+          active.native_binding = await io.native.prepare(active.task!.task, journal.principal_id);
+          await checkpoint(); timeCheck();
+        }
+        const prompt = assemblePrompt(active.task!, intent, pinned, context.value, maxPrompt)
+          + (active.native_binding ? '\nApproved native contract and frozen check instructions:\n' + active.native_binding.prompt : '');
+        if (prompt.length > maxPrompt) throw new DriverHold('mandatory_prompt_exceeds_bound');
+        const tokens = Math.min(maxTokens, active.native_binding?.max_tokens ?? maxTokens,
+          active.native_binding ? active.native_binding.max_total_tokens - promptTokenEstimate(prompt.length) : maxTokens);
+        if (tokens < 1) throw new DriverHold('native_estimated_tokens_exceed_unit_budget');
+        if (active.native_binding && reservationMicroUsd(estimateMicroUsd(active.native_binding.model, prompt.length, tokens))
+          > active.native_binding.max_micro_usd) throw new DriverHold('native_reservation_exceeds_unit_budget');
         active.envelope = { schema_version: '1', project, task_id: active.task!.task.id,
           run_id: active.run_id, attempt_id: active.attempt_id, lease_epoch: active.task!.lease.lease_epoch,
-          intent_revision: intentRevision, cancel_generation: 0, prompt, max_tokens: maxTokens };
+          intent_revision: intentRevision, cancel_generation: 0, prompt, max_tokens: tokens,
+          ...(active.native_binding ? { model: active.native_binding.model } : {}) };
         active.envelope_sha256 = digest(JSON.stringify(active.envelope)); active.phase = 'ready';
         await checkpoint();
       }
       if (digest(JSON.stringify(active.envelope)) !== active.envelope_sha256
         || !active.material || digest(active.material.context_json) !== active.material.context_sha256) throw new DriverHold('journal_material_mismatch');
+      if (active.native_binding) {
+        if (!io.native) throw new DriverHold('native_adapter_missing');
+        const current = await io.native.prepare(active.task!.task, journal.principal_id);
+        if (JSON.stringify(current) !== JSON.stringify(active.native_binding)) throw new DriverHold('native_contract_changed');
+        timeCheck();
+        clearTimeout(nativeTimer);
+        nativeTimer = setTimeout(() => control.abort(), active.started_at_ms! + current.max_wall_ms - now());
+      } else if (io.native) throw new DriverHold('native_envelope_missing');
       let report: Record<string, unknown>;
       if (active.phase === 'ready') {
         await renew();
@@ -320,6 +418,16 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
         if (!observed) throw new DriverHold('execution_response_unknown');
         await bindGeneration(observed);
         report = observed;
+      }
+      if (report.state === 'held' && report.failure === 'prior_task_run_unresolved'
+        && typeof report.blocking_run_id === 'string' && report.fetches === 0 && report.reservation_id === null) {
+        // Reclaiming a task does not reconcile the previous host's external
+        // effect. Preserve both its recovery identity and this unsent request;
+        // never issue cost reconciliation under a different author's identity.
+        active.phase = 'ready'; active.hold_reason = 'prior_task_run_unresolved';
+        delete active.execution_generation;
+        await checkpoint();
+        return { mode: 'executed', disposition: 'HOLD', completed, run_id: active.run_id, reason: active.hold_reason };
       }
       if (report.state === 'busy' && report.fetches === 0 && report.reservation_id === null
         && typeof report.failure === 'string' && /^(run_busy|task_busy|agent_busy|capacity):/.test(report.failure)) {
@@ -356,18 +464,59 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
         if (artifact.message_id !== report.artifact_id || !Array.isArray(artifact.revisions) || artifact.revisions.length !== 1) throw new DriverHold('artifact_revision_changed');
         const revision = object(artifact.revisions[0]);
         if (revision.version !== 1 || revision.room_id !== ROOM || revision.actor_id !== journal.principal_id) throw new DriverHold('artifact_binding_mismatch');
+        const artifactId = report.artifact_id;
+        if (active.native_binding) {
+          const binding = active.native_binding, envelope = active.envelope;
+          const authority = async () => {
+            await renew();
+            if (nativeTaskDigest(active!.task!.task) !== binding.task_spec_sha256) throw new DriverHold('native_task_spec_changed');
+            const view = object(await request('GET', `${ROOT}/execution-runs/${encodeURIComponent(active!.run_id)}`));
+            const auth = object(view.authority);
+            if (view.run_id !== envelope.run_id || view.task_id !== envelope.task_id || view.attempt_id !== envelope.attempt_id
+              || view.principal_id !== journal!.principal_id || view.state !== 'settled'
+              || auth.authorized !== true || auth.lease_epoch !== envelope.lease_epoch
+              || auth.intent_revision !== envelope.intent_revision || auth.cancel_generation !== envelope.cancel_generation) {
+              throw new DriverHold('native_current_authority_denied');
+            }
+          };
+          await authority();
+          const cost = object(await request('POST', `${ROOT}/execution-runs/reconcile`, { schema_version: '1', run_id: active.run_id }));
+          if (cost.chat_posts !== 0 || cost.state !== 'settled' || cost.disposition !== 'PASS'
+            || !Number.isSafeInteger(cost.actual_micro_usd) || (cost.actual_micro_usd as number) < 0
+            || (cost.actual_micro_usd as number) > binding.max_micro_usd) throw new DriverHold('native_actual_cost_unavailable_or_over_cap');
+          const observed = await status();
+          const tokens = z.object({ prompt: integer, completion: integer, total: integer }).passthrough().safeParse(observed?.tokens);
+          if (!tokens.success || tokens.data.total !== tokens.data.prompt + tokens.data.completion
+            || tokens.data.total > binding.max_total_tokens) throw new DriverHold('native_actual_tokens_unavailable_or_over_cap');
+          if (typeof revision.text !== 'string') throw new DriverHold('native_model_artifact_unavailable');
+          const receipt = await io.native!.execute(binding, { run_id: active.run_id, principal_id: journal.principal_id,
+            task_id: envelope.task_id, lease_epoch: envelope.lease_epoch, intent_revision: envelope.intent_revision,
+            cancel_generation: envelope.cancel_generation, model_artifact_id: artifactId,
+            actual_micro_usd: cost.actual_micro_usd as number,
+            actual_tokens: { prompt: tokens.data.prompt, completion: tokens.data.completion, total: tokens.data.total } }, revision.text, authority, control.signal);
+          if (receipt.status !== 'LOCAL_CHECKS_PASSED') throw new DriverHold('native_acceptance_failed');
+          const text = JSON.stringify(receipt);
+          if (Buffer.byteLength(text) > 32768) throw new DriverHold('native_evidence_exceeds_message_bound');
+          await authority();
+          active.native_submission = { schema_version: '1', run_id: active.run_id, attempt_id: active.attempt_id,
+            task_id: envelope.task_id, lease_epoch: envelope.lease_epoch, intent_revision: envelope.intent_revision,
+            cancel_generation: envelope.cancel_generation, expected_version: active.task!.task.version,
+            idempotency_key: `native-submit-${uuid()}`, receipt_json: text };
+          active.phase = 'submitting'; await checkpoint();
+          await submitNative(); continue;
+        }
         active.submission = { key: `orch-submit-${uuid()}`, body: { schema_version: '1', expected_version: active.task!.task.version,
-          lease_epoch: active.envelope.lease_epoch, artifact_message_id: report.artifact_id, artifact_revision: 1, disposition: 'review' } };
+          lease_epoch: active.envelope.lease_epoch, artifact_message_id: artifactId, artifact_revision: 1, disposition: 'review',
+          execution: { run_id: active.envelope.run_id, attempt_id: active.envelope.attempt_id,
+            intent_revision: active.envelope.intent_revision, cancel_generation: active.envelope.cancel_generation } } };
         active.phase = 'submitting'; await checkpoint();
       }
-      await request('POST', `${ROOT}/tasks/${encodeURIComponent(active.envelope.task_id)}/submit`, active.submission.body, active.submission.key);
-      active.phase = 'completed'; delete active.hold_reason;
-      journal.active_run_id = null; completed++; await checkpoint(); active = undefined;
+      await submitText();
     }
     return { mode: 'executed', disposition: 'AWAITING_REVIEW', completed };
   } catch (e) {
-    const reason = e instanceof DriverHold ? e.code : e instanceof z.ZodError ? 'invalid_server_response' : 'transport_or_storage_unavailable';
+    const reason = e instanceof DriverHold || e instanceof NativeHold ? e.code : e instanceof z.ZodError ? 'invalid_server_response' : 'transport_or_storage_unavailable';
     if (active && journal) { active.phase = 'held'; active.hold_reason = reason; await checkpoint().catch(() => undefined); }
     return { mode: 'executed', disposition: 'HOLD', completed, ...(active ? { run_id: active.run_id } : {}), reason };
-  } finally { clearTimeout(deadlineTimer); control.abort(); }
+  } finally { clearTimeout(deadlineTimer); clearTimeout(nativeTimer); control.abort(); }
 }
