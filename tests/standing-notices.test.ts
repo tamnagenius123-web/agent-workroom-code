@@ -1,27 +1,28 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
 import { Miniflare } from 'miniflare';
 import { migrate } from '../scripts/local-harness.ts';
 import { cloneD1, D1_TEMPLATE_NAME } from '../scripts/d1-template.ts';
 import { Fault } from '../src/server/contracts.ts';
 import type { Database } from '../src/server/db.ts';
 import { Workroom } from '../src/server/domain.ts';
-import type { ContextSections, PackEntry } from '../src/server/context-pack.ts';
+import { fitContextData, type ContextSections, type PackEntry } from '../src/server/context-pack.ts';
 import type { FoldContextSections } from '../src/server/fold-pack.ts';
 import {
   PINNED_LIMIT, assertStandingFits, buildOwnerMemory, standingChars,
   type HookKind, type OwnerMemory,
 } from '../src/server/memory-hook.ts';
-import { fitBrief, type BriefDraft } from '../src/server/room-brief.ts';
+import { fitBrief, roomBrief, type BriefDraft } from '../src/server/room-brief.ts';
 import { pinTable } from '../src/server/pin-table.ts';
 import type { OwnerDecision } from '../src/server/owner-decisions.ts';
-import { proposeItem, type MemoryItem } from '../src/server/memory-items.ts';
-import { itemContentDigest, reviewItem } from '../src/server/memory-review.ts';
+import { proposeItem, proposeSupersede, type MemoryItem, type ProposeItemInput } from '../src/server/memory-items.ts';
+import { edgeContentDigest, itemContentDigest, reviewEdge, reviewItem } from '../src/server/memory-review.ts';
+import { STANDING_MEMORY_POLICY } from '../src/server/standing-memory.ts';
 
 // U7/G4: standing owner notices (MEM-HOOK pinned core) and the pin comparison table.
-// All decision data here is fixture data through the pure buildOwnerMemory seam:
-// this repo's owner-decisions module is the D5-cm boundary stub, so no real ledger
-// is read and nothing is fabricated into a pack or a brief.
+// Owner-decision data remains the pure buildOwnerMemory seam (the private boundary
+// stays closed). Reviewed standing-memory tests use real local D1 proposal/review.
 
 const ROOM = 'room_main';
 const AT = '2026-10-23T00:00:00.000Z';
@@ -236,11 +237,178 @@ test('domain context pack carries pin_table; owner_memory stays absent while the
     const wr = new Workroom(db, 'agent:grok');
     const res = await wr.contextPack({ room: ROOM, task: 'record', budget_chars: 6000, at: AT });
     assert.equal('owner_memory' in res.data, false);
-    assert.deepEqual(Object.keys(res.data), ['sections', 'used_chars', 'truncated', 'lineage', 'pin_table']);
+    assert.deepEqual(Object.keys(res.data), ['sections', 'used_chars', 'truncated', 'lineage', 'pin_table', 'manifest']);
     assert.deepEqual(res.data.pin_table, [
-      { section: 'decisions', entry_id: item.id, source_message_id: 'msg-1', source_version: 1, source_current_version: 1, basis: 'pinned', status: 'current' },
+      { section: 'decisions', entry_id: item.id, source_message_id: 'msg-1', source_version: 1, source_current_version: 1, basis: 'pinned', status: 'current',
+        source_sha256: createHash('sha256').update('The room agreed on the record.').digest('hex'), source_present: true },
     ]);
     const folded = await wr.contextPack({ room: ROOM, task: 'record', budget_chars: 6000, at: AT, folds: true });
     assert.deepEqual(folded.data.pin_table, res.data.pin_table);
+  } finally { await close(); }
+});
+
+async function standingItem(db: Database, over: Partial<ProposeItemInput> & { id: string }, approve = true): Promise<MemoryItem> {
+  const source = over.source_message_id ?? `source-${over.id}`;
+  const room = over.room_id ?? ROOM;
+  await db.prepare('INSERT INTO messages(id,room_id,actor_id,text,format,created_at) VALUES (?,?,?,?,?,?)')
+    .bind(source, room, 'agent:grok', `Evidence for ${over.id}: 안녕하세요 😀`, 'text', '2026-10-01T00:00:00.000Z').all();
+  const item = await proposeItem(db, 'agent:grok', {
+    room_id: room, kind: 'decision', tier: 2, title: `[standing] ${over.id}`, body: `Approved notice ${over.id}.`,
+    source_message_id: source, valid_from: '2026-10-01T00:00:00.000Z', ...over,
+  });
+  if (approve) await reviewItem(db, 'agent:dots', item.id, 'approve', 'Recorded.', await itemContentDigest(item));
+  return item;
+}
+
+test('nine approved opt-in notices appear in a stable full prefix in plain pack, folded pack and brief', async () => {
+  const { db, close } = await start();
+  try {
+    for (const id of ['dec-d', 'dec-b', 'dec-a', 'dec-c']) await standingItem(db, { id });
+    for (const id of ['fact-b', 'fact-a']) await standingItem(db, { id, kind: 'fact' });
+    for (const id of ['skill-c', 'skill-a', 'skill-b']) await standingItem(db, { id, kind: 'skill', tier: 3 });
+    await standingItem(db, { id: 'pending' }, false);
+    await standingItem(db, { id: 'ordinary', title: 'Certified but not a standing notice' });
+    await standingItem(db, { id: 'low-tier', tier: 1 });
+    await db.prepare("INSERT INTO rooms(id) VALUES ('room_other')").all();
+    await standingItem(db, { id: 'foreign', room_id: 'room_other' });
+    const wr = new Workroom(db, 'agent:grok');
+    const a = await wr.contextPack({ room: ROOM, task: 'unrelated first task', budget_chars: 20000, at: AT });
+    const b = await wr.contextPack({ room: ROOM, task: 'different next task', budget_chars: 20000, at: '2026-10-24T00:00:00.000Z', folds: true });
+    const brief = await wr.briefGet({ room: ROOM, max_chars: 8000, at: AT, task: 'third task' });
+    const expected = ['dec-a', 'dec-b', 'dec-c', 'dec-d', 'fact-a', 'fact-b', 'skill-a', 'skill-b', 'skill-c'];
+    assert.deepEqual(a.data.standing_memory?.notices.map(notice => notice.id), expected);
+    assert.equal(a.data.standing_memory?.policy, STANDING_MEMORY_POLICY);
+    assert.equal(JSON.stringify(a.data.standing_memory), JSON.stringify(b.data.standing_memory));
+    assert.equal(JSON.stringify(a.data.standing_memory), JSON.stringify(brief.data.standing_memory));
+    for (const data of [a.data, b.data, brief.data]) assert.equal(Object.keys(data)[0], 'standing_memory');
+    const prefix = JSON.stringify(a.data.standing_memory);
+    for (const forbidden of ['pending', 'ordinary', 'low-tier', 'foreign', 'created_at', 'valid_from', 'heartbeat', 'query_terms']) {
+      assert.equal(prefix.includes(forbidden), false, forbidden);
+    }
+    assert.equal('owner_memory' in a.data, false, 'approved room memory is not invented private owner authority');
+    assert.equal(a.data.pin_table.filter(pin => pin.section === 'standing').length, 9);
+    assert.equal(a.data.manifest.token_count, null);
+    assert.equal(a.data.manifest.token_status, 'unknown');
+  } finally { await close(); }
+});
+
+test('standing source pins bind raw revisions while emitted digest and UTF-16 size bind the whole response', async () => {
+  const { db, close } = await start();
+  try {
+    const notice = await standingItem(db, { id: 'notice-source', body: 'Full approved body 😀'.repeat(8) });
+    const wr = new Workroom(db, 'agent:grok');
+    await wr.g2.revise({ schema_version: '1', room: ROOM, message_id: notice.source_message_id, expected_version: 1,
+      text: 'A later source revision', format: 'text', idempotency_key: 'notice-source-revision-2' });
+    const { data } = await wr.contextPack({ room: ROOM, task: 'notice', budget_chars: 6000, at: AT });
+    assert.equal(data.used_chars, JSON.stringify(data).length);
+    const { used_chars: _used, manifest, ...payload } = data;
+    void _used;
+    assert.equal(manifest.payload_sha256, createHash('sha256').update(JSON.stringify(payload)).digest('hex'));
+    assert.equal(manifest.payload_utf8_bytes, Buffer.byteLength(JSON.stringify(payload), 'utf8'));
+    assert.equal(manifest.count_unit, 'utf16_code_units');
+    const pin = data.pin_table.find(row => row.section === 'standing');
+    assert.equal(pin?.source_version, 1);
+    assert.equal(pin?.source_current_version, 2);
+    assert.equal(pin?.status, 'stale');
+    assert.equal(pin?.source_sha256, createHash('sha256').update('Evidence for notice-source: 안녕하세요 😀').digest('hex'));
+    assert.equal(pin?.source_present, true);
+    assert.equal(data.standing_memory?.notices[0]?.body, notice.body);
+  } finally { await close(); }
+});
+
+test('mandatory reviewed notices never become partial output when pack or brief budget is too small', async () => {
+  const { db, close } = await start();
+  try {
+    await standingItem(db, { id: 'large-notice', body: 'x'.repeat(1200) });
+    const wr = new Workroom(db, 'agent:grok');
+    const overflow = (error: unknown) => error instanceof Fault && error.code === 'MANDATORY_EXCEEDS_BUDGET';
+    for (const folds of [false, true]) {
+      await assert.rejects(() => wr.contextPack({ room: ROOM, task: 'anything', budget_chars: 500, at: AT, folds }), overflow);
+    }
+    await assert.rejects(() => roomBrief(db, ROOM, { maxChars: 1000, at: AT }), overflow);
+    const fit = await wr.contextPack({ room: ROOM, task: 'anything', budget_chars: 6000, at: AT });
+    assert.equal(fit.data.standing_memory?.notices[0]?.body.length, 1200);
+  } finally { await close(); }
+});
+
+test('approved supersession removes the old notice and preserves the prefix before its position', async () => {
+  const { db, close } = await start();
+  try {
+    await standingItem(db, { id: 'dec-a' });
+    await standingItem(db, { id: 'dec-b' });
+    const old = await standingItem(db, { id: 'dec-c' });
+    const wr = new Workroom(db, 'agent:grok');
+    const before = await wr.contextPack({ room: ROOM, task: 'before', budget_chars: 8000, at: AT });
+    const replacement = await standingItem(db, { id: 'dec-d', valid_from: '2026-10-20T00:00:00.000Z' });
+    const edge = await proposeSupersede(db, 'agent:grok', old.id, replacement.id);
+    await reviewEdge(db, 'agent:dots', edge.id, 'approve', 'Superseded.', await edgeContentDigest(edge));
+    const after = await wr.contextPack({ room: ROOM, task: 'after', budget_chars: 8000, at: AT });
+    assert.deepEqual(after.data.standing_memory?.notices.map(notice => notice.id), ['dec-a', 'dec-b', 'dec-d']);
+    const a = JSON.stringify(before.data.standing_memory);
+    const b = JSON.stringify(after.data.standing_memory);
+    assert.equal(a.slice(0, a.indexOf('"id":"dec-c"')), b.slice(0, b.indexOf('"id":"dec-d"')));
+    assert.equal(b.includes('Approved notice dec-c.'), false);
+  } finally { await close(); }
+});
+
+test('owner_memory and mandatory metadata are counted together at the final pack boundary', async () => {
+  const { db, close } = await start();
+  try {
+    const owner = buildOwnerMemory(FIXTURE, { kind: 'handoff', text: 'merge gate' });
+    assert.ok(owner);
+    const pack = { sections: { decisions: [], skills: [], facts: [], messages: [] }, used_chars: 0, truncated: false, lineage: [] };
+    const budget = Math.max(500, standingChars(owner));
+    assertStandingFits(owner, budget, 'budget_chars');
+    await assert.rejects(() => fitContextData(db, ROOM, pack, budget, owner, null),
+      (error: unknown) => error instanceof Fault && error.code === 'MANDATORY_EXCEEDS_BUDGET');
+    const data = await fitContextData(db, ROOM, pack, 4000, owner, null);
+    assert.deepEqual(data.owner_memory, owner);
+    assert.equal(data.used_chars, JSON.stringify(data).length);
+  } finally { await close(); }
+});
+
+test('queue pickup and every explicit recall kind carry the same reviewed standing prefix', async () => {
+  const { db, close } = await start();
+  try {
+    await migrate(db, 35);
+    await standingItem(db, { id: 'wake-notice' });
+    const wr = new Workroom(db, 'agent:grok');
+    const reference = await wr.contextPack({ room: ROOM, task: 'wake', budget_chars: 6000 });
+    const prefix = JSON.stringify(reference.data.standing_memory);
+    for (const kind of ['handoff', 'question', 'decision'] as const) {
+      const recall = await wr.memoryRecall({ room: ROOM, kind, text: '네' });
+      assert.equal(JSON.stringify(recall.data.standing_memory), prefix);
+      assert.equal(Object.keys(recall.data)[0], 'standing_memory');
+      assert.equal(recall.data.owner_memory, null);
+    }
+    const queue = await wr.myQueue({ room: ROOM });
+    assert.equal(JSON.stringify(queue.data.standing_memory), prefix);
+    assert.equal(Object.keys(queue.data)[0], 'standing_memory');
+    const outsider = new Workroom(db, 'agent:outsider');
+    const forbidden = (error: unknown) => error instanceof Fault && error.code === 'FORBIDDEN';
+    await assert.rejects(() => outsider.memoryRecall({ room: ROOM, kind: 'handoff', text: 'wake' }), forbidden);
+    await assert.rejects(() => outsider.myQueue({ room: ROOM }), forbidden);
+    await assert.rejects(() => outsider.contextPack({ room: ROOM, task: 'wake', budget_chars: 6000 }), forbidden);
+  } finally { await close(); }
+});
+
+test('the final context data budget includes pin_table and response metadata for plain and folded packs', async () => {
+  const { db, close } = await start();
+  try {
+    await db.prepare('INSERT INTO messages(id,room_id,actor_id,text,format,created_at) VALUES (?,?,?,?,?,?)')
+      .bind('msg-budget', ROOM, 'agent:grok', 'Context budgeting evidence. ' + '😀'.repeat(180), 'text', '2026-10-01T00:00:00.000Z').all();
+    const item = await proposeItem(db, 'agent:grok', {
+      room_id: ROOM, kind: 'decision', tier: 1, title: 'Budget evidence', body: 'Context budgeting evidence. ' + '😀'.repeat(180),
+      source_message_id: 'msg-budget', valid_from: '2026-10-01T00:00:00.000Z',
+    });
+    await reviewItem(db, 'agent:dots', item.id, 'approve', 'Recorded.', await itemContentDigest(item));
+    const wr = new Workroom(db, 'agent:grok');
+    for (const folds of [false, true]) {
+      const wide = await wr.contextPack({ room: ROOM, task: 'budget', budget_chars: 6000, at: AT, folds });
+      const budget = Math.max(500, JSON.stringify(wide.data.sections).length);
+      const tight = await wr.contextPack({ room: ROOM, task: 'budget', budget_chars: budget, at: AT, folds });
+      assert.ok(JSON.stringify(tight.data).length <= budget, `final ${folds ? 'folded' : 'plain'} data must fit ${budget}`);
+      assert.equal(tight.data.used_chars, JSON.stringify(tight.data).length);
+    }
   } finally { await close(); }
 });

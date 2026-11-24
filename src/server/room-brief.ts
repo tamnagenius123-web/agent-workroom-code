@@ -6,6 +6,7 @@ import { foldReviewQueue } from './fold-pack.ts';
 import { validView, type MemoryItem } from './memory-items.ts';
 import { skillGrade, type SkillGrade } from './skill-grade.ts';
 import { assertStandingFits, ownerMemory, type OwnerMemory } from './memory-hook.ts';
+import { standingMemory, type StandingMemory } from './standing-memory.ts';
 
 // OCG-W W8: read-only compiled room brief. A view, never a source of truth. No table and no write.
 // Decisions and skills are validView (ABSORB_DESIGN valid_view: approved, in window, pending excluded).
@@ -72,6 +73,8 @@ export interface BriefTask {
 }
 
 export interface RoomBrief {
+  /** Reviewed opt-in notices, complete and stable across tasks and clock changes. */
+  standing_memory?: StandingMemory;
   /** MEM-HOOK: enforced owner-decision injection, first key (stable pinned prefix). Absent when 0045 is not applied. */
   owner_memory?: OwnerMemory;
   at: string;
@@ -183,12 +186,14 @@ export interface BriefDraft {
   open_tasks: BriefTask[];
   maxChars: number;
   ownerMemory: OwnerMemory | null;
+  standingMemory?: StandingMemory | null;
   decisionsOmitted: number;
   extraNotes: string[];
 }
 
 function shape(draft: BriefDraft, truncated: boolean, notes: string[]): RoomBrief {
   return {
+    ...(draft.standingMemory ? { standing_memory: draft.standingMemory } : {}),
     ...(draft.ownerMemory ? { owner_memory: draft.ownerMemory } : {}),
     at: draft.at,
     room: draft.room,
@@ -208,11 +213,10 @@ function shape(draft: BriefDraft, truncated: boolean, notes: string[]): RoomBrie
  * Lowest priority list first: recent_kept_experience, open_tasks, skills, decisions.
  * A higher list loses its last entry only after every lower list is empty.
  * Exported as the pure seam for tests (same pattern as buildOwnerMemory): roomBrief
- * itself reads the standing block through the owner-decisions boundary stub, so the
- * mandatory-content budget behavior is proven here with fixture drafts.
+ * reads approved opt-in memory separately from the owner-decisions boundary.
  *
  * The budget applies to the whole serialized brief. Only the four lists are drop
- * candidates; the mandatory remainder (owner_memory when present, review_queue,
+ * candidates; the mandatory remainder (standing_memory/owner_memory, review_queue,
  * notes, at/room, decisions_omitted) is never dropped or clipped. If that remainder
  * alone exceeds maxChars the call fails with INVALID_INPUT instead of returning a
  * brief that is silently over budget.
@@ -234,7 +238,7 @@ export function fitBrief(draft: BriefDraft): RoomBrief {
   const brief = build();
   const finalSize = JSON.stringify(brief).length;
   if (finalSize > draft.maxChars) {
-    throw new Fault('INVALID_INPUT', `Brief mandatory content renders to ${finalSize} chars, over the max_chars budget of ${draft.maxChars}. Mandatory fields (owner_memory, review_queue, notes) are never dropped or truncated; raise max_chars.`);
+    throw new Fault(draft.standingMemory ? 'MANDATORY_EXCEEDS_BUDGET' : 'INVALID_INPUT', `Brief mandatory content renders to ${finalSize} UTF-16 code units, over the max_chars budget of ${draft.maxChars}. Mandatory fields (standing_memory, owner_memory, review_queue, notes) are never dropped or truncated; raise max_chars.`);
   }
   return brief;
 }
@@ -250,8 +254,9 @@ export async function roomBrief(db: Database, room: string, opts: RoomBriefOptio
     throw new Fault('INVALID_INPUT', 'maxChars must be an integer from 1000 to 8000');
   }
   const atTime = opts.at === undefined ? new Date().toISOString() : instant(opts.at, 'at');
-  const [om, decisionRows, skillRows, kept, counts, taskRows, foldQueue] = await Promise.all([
+  const [om, standing, decisionRows, skillRows, kept, counts, taskRows, foldQueue] = await Promise.all([
     ownerMemory(db, { kind: opts.kind ?? 'handoff', text: opts.task ?? '' }),
+    standingMemory(db, roomId, atTime),
     validView(db, roomId, { kinds: ['decision'], at: atTime, newest: DECISION_LIMIT }),
     validView(db, roomId, { kinds: ['skill'], at: atTime, topByTier: SKILL_LIMIT + 1 }),
     experienceView(db, roomId, { states: ['kept'], limit: EXPERIENCE_LIMIT }),
@@ -302,6 +307,7 @@ export async function roomBrief(db: Database, room: string, opts: RoomBriefOptio
     })),
     maxChars,
     ownerMemory: om,
+    standingMemory: standing,
     decisionsOmitted: Math.max(0, countOf(counts?.valid_decisions) - decisionRows.length),
     extraNotes: [...(skillRows.length > SKILL_LIMIT ? [SKILL_CAP_NOTE] : []), ...(countOf(counts?.valid_decisions) > decisionRows.length ? [`Loaded the newest ${decisionRows.length} of ${countOf(counts?.valid_decisions)} valid decisions before budget trimming; decisions_omitted counts the older ones not loaded, and budget trimming may drop more.`] : [])],
   });

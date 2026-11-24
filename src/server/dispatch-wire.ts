@@ -5,8 +5,10 @@ import { z } from 'zod';
 import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };
 import {
   dispatch, estimateMicroUsd, OpenRouterError,
-  type DispatchReport, type FetchLike, type Ledger, type PendingMark, type ReserveInput, type Roster, type SettleInput,
+  COUNTED_HOLD_STATES, OPENROUTER_CHAT_URL, OPENROUTER_GENERATION_URL, normalizeGenerationTokens, rosterCapMicros,
+  type DispatchReport, type FetchLike, type Ledger, type PendingMark, type ReservedChatLedger, type Roster, type SettleInput,
 } from '../or-harness/client.ts';
+import type { StoredReserveInput } from '../or-harness/ledger.ts';
 import type { Database, Value } from './db.ts';
 import type { Workroom } from './domain.ts';
 import { aggregateUnitCosts, recordUnitCost, type RecordedUnitCost } from './unit-cost.ts';
@@ -15,12 +17,9 @@ import { Fault, keySchema } from './contracts.ts';
 import type { McpServer } from '@modelcontextprotocol/server';
 
 const roster = rosterJson as unknown as Roster;
-const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
 const KEY_RE = /^[A-Za-z0-9_.-]{8,128}$/;
-const COUNTED_HOLD = `state IN ('open', 'pending_actual', 'unknown')`;
-
-export const DEFAULT_BUDGET_CAP_USD_MICROS = 3_000_000;
+const COUNTED_HOLD = `state IN (${COUNTED_HOLD_STATES.map(state => `'${state}'`).join(', ')})`;
+const WORKER_CAP_PROJECT = 'test';
 
 export interface DispatchEnv {
   OPENROUTER_API_KEY?: string;
@@ -84,6 +83,11 @@ interface ReservationRow {
   generation_id: string | null;
   provider_account: string;
   model: string;
+  project: string;
+  principal_id: string;
+  run_id: string;
+  attempt_id: string;
+  pricing_snapshot_json: string;
 }
 interface ActualRow {
   reservation_id: string;
@@ -92,6 +96,7 @@ interface ActualRow {
   model: string;
   micro_usd: number | string | bigint;
   cost_field: string;
+  tokens_json: string;
 }
 interface DispatchRow {
   id: string;
@@ -123,9 +128,12 @@ function readDispatchEnv(env: object): DispatchEnv {
   };
 }
 
-export function budgetCapUsdMicros(env: DispatchEnv): number {
+export function budgetCapUsdMicros(env: DispatchEnv, source: Roster = roster): number {
   const raw = env.BUDGET_CAP_USD_MICROS;
-  if (raw === undefined || raw === null || raw === '') return DEFAULT_BUDGET_CAP_USD_MICROS;
+  if (raw === undefined || raw === null || raw === '') {
+    try { return rosterCapMicros(source.project_defaults, WORKER_CAP_PROJECT); }
+    catch { throw notConfigured(); }
+  }
   const text = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw : null;
   if (text === null || !/^[0-9]+$/.test(text)) throw notConfigured();
   const value = Number(text);
@@ -209,128 +217,174 @@ function positionSummary(cap: number, position: { spent: number; held: number })
   return { cap, spent: position.spent, held: position.held, remaining };
 }
 
-/** Ledger the OpenRouter client drives. Each method's write is one D1 batch. */
-export function openD1Ledger(db: Database, principal: string, cap: number): Ledger {
+const RESERVATION_COLUMNS = 'reservation_id,attempt_id,run_id,project,principal_id,model,state,micro_usd,pricing_snapshot_json,generation_id,provider_account';
+const snapshotSchema = z.object({ model: z.string().min(1) }).passthrough();
+
+function nonempty(value: unknown, field: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) throw new Error(`invalid ${field}`);
+}
+function snapshotJson(value: unknown): string {
+  return JSON.stringify(stable(snapshotSchema.parse(value)));
+}
+function storedSnapshot(raw: string) {
+  return snapshotSchema.parse(JSON.parse(raw) as unknown);
+}
+function tokensJson(value: unknown): string {
+  return JSON.stringify(stable(normalizeGenerationTokens(value)));
+}
+function owned(row: ReservationRow | null, principal: string): asserts row is ReservationRow {
+  if (!row || row.principal_id !== principal) throw new Error('reservation not found');
+}
+
+export interface D1Ledger extends Ledger, ReservedChatLedger {
+  reserve(input: StoredReserveInput): ReturnType<Ledger['reserve']>;
+  listPendingWithGeneration(): Promise<import('../or-harness/client.ts').PendingGenerationHold[]>;
+  closeNoCharge(reservationId: string, evidence: string): Promise<'closed_no_charge'>;
+}
+
+/**
+ * One wallet across all projects (OR-ONE-CLIENT D4). Reservation identity and
+ * provider bindings are checked inside the same SQL writes that change money.
+ * The principal is supplied by authenticated transport, never by a receipt.
+ */
+export function openD1Ledger(db: Database, principal: string, cap: number): D1Ledger {
+  nonempty(principal, 'principal');
+  if (!Number.isSafeInteger(cap) || cap < 0) throw new Error('bad cap');
+  const load = (id: string) => one<ReservationRow>(db, `SELECT ${RESERVATION_COLUMNS} FROM budget_reservations WHERE reservation_id=?`, [id]);
   return {
-    async reserve(input: ReserveInput) {
+    async reserve(input: StoredReserveInput) {
+      for (const field of ['attempt_id', 'run_id', 'project', 'model'] as const) nonempty(input[field], field);
       if (!Number.isSafeInteger(input.est_micro_usd) || input.est_micro_usd < 0) throw new Error('bad estimate');
-      if (!input.attempt_id || !input.project) throw new Error('bad reserve');
+      if (snapshotSchema.parse(input.pricing_snapshot).model !== input.model) throw new Error('snapshot model mismatch');
+      const snapshot = snapshotJson(input.pricing_snapshot);
       const reservationId = `res_${crypto.randomUUID()}`;
-      const createdAt = new Date().toISOString();
-      const snapshot = JSON.stringify(input.pricing_snapshot);
-      const inserted = await db.batch<{ reservation_id: string }>([
+      const inserted = await db.batch<ReservationRow>([
         db.prepare(`INSERT INTO budget_reservations (
-            reservation_id, attempt_id, run_id, project, principal_id, model, state,
-            micro_usd, pricing_snapshot_json, generation_id, provider_account, pending_reason, evidence, flag, created_at
-          )
-          SELECT ?, ?, ?, ?, ?, ?, 'open', ?, ?, NULL, '', NULL, NULL, NULL, ?
-          WHERE NOT EXISTS (SELECT 1 FROM budget_reservations WHERE attempt_id = ?)
-          AND (
-            ? - COALESCE((SELECT SUM(micro_usd) FROM budget_actuals), 0)
-              - COALESCE((SELECT SUM(micro_usd) FROM budget_reservations WHERE ${COUNTED_HOLD}), 0)
-          ) >= ?`).bind(
-          reservationId, input.attempt_id, input.run_id, input.project, principal, input.model,
-          input.est_micro_usd, snapshot, createdAt, input.attempt_id, cap, input.est_micro_usd,
-        ),
-        db.prepare('SELECT reservation_id FROM budget_reservations WHERE attempt_id = ?').bind(input.attempt_id),
+            reservation_id,attempt_id,run_id,project,principal_id,model,state,micro_usd,pricing_snapshot_json,
+            generation_id,provider_account,pending_reason,evidence,flag,created_at)
+          SELECT ?,?,?,?,?,?,'open',?,?,NULL,'',NULL,NULL,NULL,?
+          WHERE NOT EXISTS (SELECT 1 FROM budget_reservations WHERE attempt_id=?)
+            AND (? - COALESCE((SELECT SUM(micro_usd) FROM budget_actuals),0)
+              - COALESCE((SELECT SUM(micro_usd) FROM budget_reservations WHERE ${COUNTED_HOLD}),0))>=?`)
+          .bind(reservationId,input.attempt_id,input.run_id,input.project,principal,input.model,input.est_micro_usd,
+            snapshot,new Date().toISOString(),input.attempt_id,cap,input.est_micro_usd),
+        db.prepare(`SELECT ${RESERVATION_COLUMNS} FROM budget_reservations WHERE attempt_id=?`).bind(input.attempt_id),
       ]);
-      const seen = inserted[1]?.results[0]?.reservation_id
-        ?? (await one<{ reservation_id: string }>(db, 'SELECT reservation_id FROM budget_reservations WHERE attempt_id = ?', [input.attempt_id]))?.reservation_id;
-      if (seen) return { ok: true, reservation_id: seen };
-      const position = await readPosition(db);
-      return { ok: false, reason: 'over_budget', remaining: positionSummary(cap, position).remaining };
+      const seen = inserted[1]?.results[0];
+      if (seen) {
+        owned(seen, principal);
+        if (seen.run_id !== input.run_id || seen.project !== input.project
+          || asMicro(seen.micro_usd) !== input.est_micro_usd
+          || storedSnapshot(seen.pricing_snapshot_json).model !== input.model
+          || snapshotJson(storedSnapshot(seen.pricing_snapshot_json)) !== snapshot) throw new Error('reservation replay conflict');
+        return { ok: true, reservation_id: seen.reservation_id, created: seen.reservation_id === reservationId,
+          state: z.enum(['open', 'pending_actual', 'unknown', 'settled', 'closed_no_charge']).parse(seen.state) };
+      }
+      return { ok: false, reason: 'over_budget', remaining: positionSummary(cap, await readPosition(db)).remaining };
+    },
+
+    async assertReservation(binding: Parameters<ReservedChatLedger['assertReservation']>[0]) {
+      const row = await load(binding.reservation_id);
+      owned(row, principal);
+      const snapshot = storedSnapshot(row.pricing_snapshot_json);
+      if (!COUNTED_HOLD_STATES.includes(row.state as typeof COUNTED_HOLD_STATES[number]) || row.generation_id !== null
+        || row.run_id !== binding.run_id || row.attempt_id !== binding.attempt_id || row.project !== binding.project
+        || snapshot.model !== binding.model || snapshot.prompt_chars !== binding.prompt_chars
+        || snapshot.max_tokens !== binding.max_tokens) throw new Error('reservation binding mismatch');
     },
 
     async markPending(reservationId: string, reason: string, extra?: PendingMark) {
+      nonempty(reason, 'pending reason');
       const generation = extra?.generation_id ?? null;
       const model = extra?.model ?? null;
+      if (generation !== null) nonempty(generation, 'generation');
+      if (model !== null) nonempty(model, 'model');
+      if (extra?.provider_account !== undefined && extra.provider_account !== null && typeof extra.provider_account !== 'string') throw new Error('invalid account');
       const account = accountOf(extra?.provider_account);
-      await db.batch([
-        db.prepare(`UPDATE budget_reservations
-          SET state = 'pending_actual',
-              pending_reason = ?,
-              generation_id = CASE WHEN ? IS NULL THEN generation_id ELSE ? END,
-              model = CASE WHEN ? IS NULL THEN model ELSE ? END,
-              provider_account = CASE WHEN ? = '' THEN provider_account WHEN provider_account = '' THEN ? ELSE provider_account END
-          WHERE reservation_id = ?
-            AND ${COUNTED_HOLD}
-            AND (? IS NULL OR generation_id IS NULL OR generation_id = ?)
-            AND (? = '' OR provider_account = '' OR provider_account = ?)`).bind(
-          reason, generation, generation, model, model, account, account, reservationId, generation, generation, account, account,
-        ),
-      ]);
-      const row = await one<ReservationRow>(db, `SELECT reservation_id, state, micro_usd, generation_id, provider_account, model
-        FROM budget_reservations WHERE reservation_id = ?`, [reservationId]);
-      if (!row) throw new Error('not found');
-      if (row.state !== 'pending_actual') throw new Error('invalid_state');
-      if (generation !== null && row.generation_id !== generation) throw new Error('invalid_state');
-      if (account !== '' && row.provider_account !== '' && row.provider_account !== account) throw new Error('invalid_state');
+      const changed = await db.prepare(`UPDATE budget_reservations
+        SET state='pending_actual',pending_reason=?,
+          model=CASE WHEN generation_id IS NULL AND ? IS NOT NULL THEN COALESCE(?,'')
+            WHEN model='' AND ? IS NOT NULL THEN ? ELSE model END,
+          generation_id=COALESCE(generation_id,?),
+          provider_account=CASE WHEN provider_account='' THEN ? ELSE provider_account END
+        WHERE reservation_id=? AND principal_id=? AND ${COUNTED_HOLD}
+          AND (? IS NULL OR generation_id IS NULL OR generation_id=?)
+          AND (?='' OR provider_account='' OR provider_account=?)
+          AND (? IS NULL OR generation_id IS NULL OR model='' OR model=?)
+        RETURNING reservation_id`).bind(reason,generation,model,model,model,generation,account,reservationId,principal,
+          generation,generation,account,account,model,model).first<{ reservation_id: string }>();
+      if (!changed) throw new Error('reservation pending conflict');
     },
 
     async settle(reservationId: string, actual: SettleInput) {
       if (actual.cost_field !== 'total_cost' && actual.cost_field !== 'usage') throw new Error('bad cost_field');
       if (!Number.isSafeInteger(actual.micro_usd) || actual.micro_usd < 0) throw new Error('bad micro_usd');
-      if (!actual.generation_id) throw new Error('missing generation_id');
+      nonempty(actual.generation_id, 'generation');
+      nonempty(actual.model, 'model');
+      if (actual.provider_account !== null && typeof actual.provider_account !== 'string') throw new Error('invalid account');
       const account = accountOf(actual.provider_account);
-      const actualId = `act_${crypto.randomUUID()}`;
-      const createdAt = new Date().toISOString();
-      const tokens = JSON.stringify(actual.tokens);
-      const update = db.prepare(`UPDATE budget_reservations
-        SET state = 'settled',
-            flag = CASE WHEN ? > micro_usd THEN 'over_budget' ELSE flag END,
-            generation_id = COALESCE(generation_id, ?),
-            provider_account = CASE WHEN provider_account = '' THEN ? ELSE provider_account END,
-            model = ?
-        WHERE reservation_id = ?
-          AND ${COUNTED_HOLD}
-          AND EXISTS (
-            SELECT 1 FROM budget_actuals a
-            WHERE a.reservation_id = budget_reservations.reservation_id
-              AND a.provider = 'openrouter' AND a.provider_account = ? AND a.generation_id = ?
-              AND a.micro_usd = ? AND a.cost_field = ?
-          )`).bind(actual.micro_usd, actual.generation_id, account, actual.model, reservationId, account, actual.generation_id, actual.micro_usd, actual.cost_field);
+      const tokens = tokensJson(actual.tokens);
+      // A first provider receipt may resolve an alias to a canonical model. Once
+      // generation_id is pinned, that model/account cannot be replaced. The
+      // requested model remains immutable in pricing_snapshot_json for replay.
+      const binding = `r.principal_id=? AND (r.generation_id IS NULL OR r.generation_id=?)
+        AND (r.provider_account='' OR r.provider_account=?) AND (r.generation_id IS NULL OR r.model='' OR r.model=?)`;
       await db.batch([
-        db.prepare(`INSERT INTO budget_actuals (
-            id, reservation_id, project, provider, provider_account, generation_id, model,
-            micro_usd, cost_field, tokens_json, flag, created_at
-          )
-          SELECT ?, r.reservation_id, r.project, 'openrouter', ?, ?, ?, ?, ?, ?,
-            CASE WHEN ? > r.micro_usd THEN 'over_budget' ELSE NULL END, ?
-          FROM budget_reservations r
-          WHERE r.reservation_id = ?
-            AND r.${COUNTED_HOLD}
-            AND NOT EXISTS (
-              SELECT 1 FROM budget_actuals a
-              WHERE a.provider = 'openrouter' AND a.provider_account = ? AND a.generation_id = ?
-            )`).bind(
-          actualId, account, actual.generation_id, actual.model, actual.micro_usd, actual.cost_field, tokens,
-          actual.micro_usd, createdAt, reservationId, account, actual.generation_id,
-        ),
-        update,
+        db.prepare(`INSERT INTO budget_actuals (id,reservation_id,project,provider,provider_account,generation_id,
+            model,micro_usd,cost_field,tokens_json,flag,created_at)
+          SELECT ?,r.reservation_id,r.project,'openrouter',?,?,?,?,?, ?,CASE WHEN ?>r.micro_usd THEN 'over_budget' ELSE NULL END,?
+          FROM budget_reservations r WHERE r.reservation_id=? AND r.${COUNTED_HOLD} AND ${binding}
+            AND NOT EXISTS (SELECT 1 FROM budget_actuals a WHERE a.reservation_id=r.reservation_id)
+            AND NOT EXISTS (SELECT 1 FROM budget_actuals a WHERE a.provider='openrouter' AND a.provider_account=? AND a.generation_id=?)`)
+          .bind(`act_${crypto.randomUUID()}`,account,actual.generation_id,actual.model,actual.micro_usd,actual.cost_field,tokens,
+            actual.micro_usd,new Date().toISOString(),reservationId,principal,actual.generation_id,account,actual.model,
+            account,actual.generation_id),
+        db.prepare(`UPDATE budget_reservations SET state='settled',flag=CASE WHEN ?>micro_usd THEN 'over_budget' ELSE flag END,
+            generation_id=COALESCE(generation_id,?),provider_account=CASE WHEN provider_account='' THEN ? ELSE provider_account END,model=?
+          WHERE reservation_id=? AND principal_id=? AND ${COUNTED_HOLD}
+            AND (generation_id IS NULL OR generation_id=?) AND (provider_account='' OR provider_account=?)
+            AND (generation_id IS NULL OR model='' OR model=?)
+            AND EXISTS (SELECT 1 FROM budget_actuals a WHERE a.reservation_id=budget_reservations.reservation_id
+              AND a.provider='openrouter' AND a.provider_account=? AND a.generation_id=? AND a.model=?
+              AND a.micro_usd=? AND a.cost_field=? AND a.tokens_json=?)`)
+          .bind(actual.micro_usd,actual.generation_id,account,actual.model,reservationId,principal,
+            actual.generation_id,account,actual.model,account,actual.generation_id,actual.model,actual.micro_usd,actual.cost_field,tokens),
       ]);
-      const loadActual = () => one<ActualRow>(db, `SELECT reservation_id, provider_account, generation_id, model, micro_usd, cost_field
-        FROM budget_actuals WHERE provider = 'openrouter' AND provider_account = ? AND generation_id = ?`, [account, actual.generation_id]);
-      const loadReservation = () => one<ReservationRow>(db, `SELECT reservation_id, state, micro_usd, generation_id, provider_account, model
-        FROM budget_reservations WHERE reservation_id = ?`, [reservationId]);
-      const stored = await loadActual();
-      let reservation = await loadReservation();
-      if (stored && stored.reservation_id === reservationId && reservation && reservation.state !== 'settled') {
-        await update.bind(actual.micro_usd, actual.generation_id, account, actual.model, reservationId, account, actual.generation_id, actual.micro_usd, actual.cost_field).all();
-        reservation = await loadReservation();
-      }
-      if (!reservation) throw new Error('not found');
-      if (!stored) throw new Error('invalid_state');
-      const matches = stored.reservation_id === reservationId
-        && stored.generation_id === actual.generation_id
-        && asMicro(stored.micro_usd) === actual.micro_usd
-        && stored.cost_field === actual.cost_field
-        && stored.provider_account === account
-        && stored.model === actual.model;
-      if (!matches || reservation.state !== 'settled') throw new Error('invalid_state');
+      const row = await load(reservationId);
+      owned(row, principal);
+      const stored = await one<ActualRow>(db, `SELECT reservation_id,provider_account,generation_id,model,micro_usd,cost_field,tokens_json
+        FROM budget_actuals WHERE provider='openrouter' AND provider_account=? AND generation_id=?`, [account,actual.generation_id]);
+      if (!stored || row.state !== 'settled' || stored.reservation_id !== reservationId
+        || row.generation_id !== actual.generation_id || row.provider_account !== account || row.model !== actual.model
+        || stored.model !== actual.model || asMicro(stored.micro_usd) !== actual.micro_usd || stored.cost_field !== actual.cost_field
+        || tokensJson(JSON.parse(stored.tokens_json) as unknown) !== tokens) throw new Error('settlement replay conflict');
+    },
+
+    async listPendingWithGeneration() {
+      const rows = await db.prepare(`SELECT reservation_id,generation_id,provider_account,model,project,state,pricing_snapshot_json
+        FROM budget_reservations WHERE principal_id=? AND state IN ('pending_actual','unknown') AND generation_id IS NOT NULL
+        ORDER BY reservation_id`).bind(principal).all<unknown>();
+      const schema = z.object({ reservation_id:z.string().min(1),generation_id:z.string().min(1),provider_account:z.string(),
+        model:z.string(),project:z.string().min(1),state:z.enum(['pending_actual','unknown']),pricing_snapshot_json:z.string() });
+      return rows.results.map(raw => { const { pricing_snapshot_json, ...row } = schema.parse(raw);
+        return { ...row, model: row.model || storedSnapshot(pricing_snapshot_json).model, provider_account: row.provider_account || null }; });
+    },
+
+    async closeNoCharge(reservationId: string, evidence: string) {
+      nonempty(evidence, 'no-charge evidence');
+      const row = await db.prepare(`UPDATE budget_reservations SET state='closed_no_charge',evidence=?
+        WHERE reservation_id=? AND principal_id=? AND generation_id IS NULL AND ${COUNTED_HOLD}
+        RETURNING reservation_id`).bind(evidence,reservationId,principal).first<{ reservation_id: string }>();
+      if (row) return 'closed_no_charge';
+      const replay = await db.prepare(`SELECT reservation_id FROM budget_reservations
+        WHERE reservation_id=? AND principal_id=? AND state='closed_no_charge' AND evidence=?`)
+        .bind(reservationId,principal,evidence).first<{ reservation_id: string }>();
+      if (!replay) throw new Error('reservation release conflict');
+      return 'closed_no_charge';
     },
 
     async summary(project: string) {
-      if (typeof project !== 'string' || project.length === 0) throw new Error('project required');
+      nonempty(project, 'project');
       return positionSummary(cap, await readPosition(db));
     },
   };
@@ -439,7 +493,7 @@ async function loadDispatch(db: Database, principal: string, key: string): Promi
 function guardedFetch(base: typeof fetch): FetchLike {
   return async (input, init) => {
     const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (target !== CHAT_URL && !target.startsWith(`${GENERATION_URL}?id=`)) throw new Error('outbound url is not an OpenRouter dispatch endpoint');
+    if (target !== OPENROUTER_CHAT_URL && !target.startsWith(`${OPENROUTER_GENERATION_URL}?id=`)) throw new Error('outbound url is not an OpenRouter dispatch endpoint');
     return base(input, init);
   };
 }

@@ -4,7 +4,8 @@
     "dist/worker.mjs": "src/server/worker.ts",
     "dist/local-worker.mjs": "src/server/local.ts",
     "dist/workroom.mjs": "src/cli/main.ts",
-    "dist/workroom-connection-plan.mjs": "src/cli/connection-plan.ts"
+    "dist/workroom-connection-plan.mjs": "src/cli/connection-plan.ts",
+    "dist/workroom-orchestrator.mjs": "scripts/orch/run.mts"
   },
   "everything": [
     "tsconfig.json"

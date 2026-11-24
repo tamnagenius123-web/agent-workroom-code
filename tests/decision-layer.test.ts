@@ -128,12 +128,19 @@ interface LedgerLog {
 function fakeLedger(ok = true): { ledger: DecisionLedger; log: LedgerLog } {
   const log: LedgerLog = { reserve: [], pending: [], settle: [], close: [] };
   let n = 0;
+  const holds = new Map<string, Parameters<DecisionLedger['reserve']>[0]>();
   const ledger: DecisionLedger = {
     reserve(input) {
       log.reserve.push({ model: input.model, attempt_id: input.attempt_id });
       n += 1;
       if (!ok) return { ok: false, reason: 'over_budget', remaining: 0 };
-      return { ok: true, reservation_id: `res-${n}` };
+      holds.set(`res-${n}`, input);
+      return { ok: true, reservation_id: `res-${n}`, created: true, state: 'open' };
+    },
+    assertReservation(binding) {
+      const held = holds.get(binding.reservation_id);
+      assert.ok(held);
+      for (const field of ['project', 'run_id', 'attempt_id', 'model'] as const) assert.equal(held[field], binding[field]);
     },
     markPending(reservation_id, reason) {
       log.pending.push({ reservation_id, reason });
@@ -369,6 +376,21 @@ test('a 500 is not stored as a noul no', async () => {
   assert.equal(result.answer, null);
   assert.equal(log.pending.some(row => row.reason.startsWith('decision:')), true);
   assert.equal(JSON.stringify(result).includes('"noul":0'), false);
+});
+
+test('a chat error carrying a generation remains held for reconciliation', async () => {
+  const { fetchImpl } = scripted(url => {
+    if (url === DECISIONS_URL) return jsonResponse(400, { error: { message: 'invalid', code: 'invalid_criteria' } });
+    if (url === CHAT_URL) return jsonResponse(400, { id: 'gen-uncertain', error: { message: 'response failed' } });
+    throw new Error(url);
+  });
+  const { ledger, log } = fakeLedger();
+  const result = await decide({ ...base(), fetchImpl, ledger });
+  const chatHold = log.reserve.find(row => row.attempt_id.endsWith('-llm'));
+  assert.ok(chatHold);
+  assert.equal(log.close.length, 1, 'only the separate failed decision request is released');
+  assert.equal(log.pending.some(row => row.reason === 'llm_error'), true);
+  assert.equal(result.verdict, 'fallback_rule');
 });
 
 test('chat text that fails zod is unsettled', async () => {

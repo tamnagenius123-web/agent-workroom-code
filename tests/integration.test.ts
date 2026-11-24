@@ -132,7 +132,7 @@ test('MCP SDK discover/list/call share exact persisted result with REST and reje
   const discovery = await rpc('server/discover');
   assert.equal(discovery.status, 200, JSON.stringify(discovery.body)); assert.deepEqual(discovery.body.result.supportedVersions, ['2026-07-28']);
   const list = await rpc('tools/list');
-  assert.equal(list.status, 200); assert.equal(list.body.result.tools.length, 75);
+  assert.equal(list.status, 200); assert.equal(list.body.result.tools.length, 84);
   for(const name of ['workroom_capabilities','workroom_message_post','workroom_operation_get','workroom_room_read','workroom_whoami','workroom_brief_get','workroom_usage_read']) assert.ok(list.body.result.tools.some(t=>t.name===name));
   const args = { schema_version: '1', room: 'room_main', text: 'MCP cross transport', idempotency_key: 'mcp-cross-001' };
   const posted = await rpc('tools/call', { name: 'workroom_message_post', arguments: args });
@@ -155,7 +155,7 @@ test('official SDK 2.3.1 client negotiates modern HTTP and calls the Worker', as
   try {
     await client.connect(transport);
     assert.deepEqual(client.getDiscoverResult()?.supportedVersions, ['2026-07-28']);
-    const list = await client.listTools(); assert.equal(list.tools.length, 75); assert.ok(list.tools.some(t => t.name === 'workroom_usage_read'), 'workroom_usage_read registered');
+    const list = await client.listTools(); assert.equal(list.tools.length, 84); assert.ok(list.tools.some(t => t.name === 'workroom_usage_read'), 'workroom_usage_read registered');
     const who = await client.callTool({ name: 'workroom_whoami', arguments: { schema_version: '1' } });
     assert.equal((who.structuredContent as Api).data.principal_id, 'synthetic:alpha');
   } finally { await client.close(); }

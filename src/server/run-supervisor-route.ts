@@ -3,10 +3,11 @@
 import { z } from 'zod';
 import { Fault } from './contracts.ts';
 import type { Workroom } from './domain.ts';
-import { DEFAULT_BUDGET_CAP_USD_MICROS } from './dispatch-wire.ts';
+import { budgetCapUsdMicros, type DispatchEnv } from './dispatch-wire.ts';
+import { reconcileRunCost } from './execution-cost.ts';
 import {
   getRunStatus, heartbeatRun, interruptRun,
-  LIVE_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, LIVE_MODEL,
+  EXECUTION_MAX_PROMPT_CHARS, LIVE_MAX_TOKENS, LIVE_MODEL,
   resumeRun, superviseRun, type RunReport,
 } from './run-supervisor.ts';
 
@@ -21,10 +22,10 @@ export const executionRunSchema = z.object({
   lease_epoch: z.number().int().min(0),
   intent_revision: z.number().int().min(0),
   cancel_generation: z.number().int().min(0).default(0),
-  prompt: z.string().min(1).max(LIVE_MAX_PROMPT_CHARS),
+  prompt: z.string().min(1).max(EXECUTION_MAX_PROMPT_CHARS),
   max_tokens: z.number().int().min(1).max(LIVE_MAX_TOKENS).default(LIVE_MAX_TOKENS),
   project: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.-]+$/).default('g1'),
-  model: z.literal(LIVE_MODEL).default(LIVE_MODEL),
+  model: z.string().min(1).max(128).default(LIVE_MODEL),
 }).strict();
 
 export const executionInterruptSchema = z.object({
@@ -42,6 +43,12 @@ export const executionHeartbeatSchema = z.object({
   lease_epoch: z.number().int().min(0),
   intent_revision: z.number().int().min(0),
   cancel_generation: z.number().int().min(0).default(0),
+  execution_generation: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict();
+
+export const executionReconcileSchema = z.object({
+  schema_version: z.literal('1'),
+  run_id: z.string().min(1).max(128),
 }).strict();
 
 function configuredKey(env: object): string | null {
@@ -76,6 +83,8 @@ function runPayload(
       receipt_id: report.receipt_id,
       fetches: report.fetches,
       trace: report.trace,
+      check_kind: 'execution_self_check',
+      task_approved: false,
     },
     meta: {},
   };
@@ -97,6 +106,18 @@ export async function executionRunRoute(
   let tail: string | undefined;
   try { tail = match[2] ? decodeURIComponent(match[2]) : undefined; } catch { throw new Fault('INVALID_INPUT', 'Execution run path is not valid.'); }
 
+  if (tail === 'reconcile') {
+    if (request.method !== 'POST') throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);
+    await service.authorize(room, true);
+    const apiKey = configuredKey(env);
+    if (!apiKey) throw new Fault('DISPATCH_NOT_CONFIGURED', 'OpenRouter dispatch is not configured.', 503);
+    const input = executionReconcileSchema.parse({ schema_version: '1', ...rejectIdentityBody(await readJSON()) });
+    const data = await reconcileRunCost(service.database, { run_id: input.run_id, principal: service.principal,
+      api_key: apiKey, cap_micro_usd: budgetCapUsdMicros(env as DispatchEnv),
+      fetch: (target, init) => globalThis.fetch(target, init) });
+    return { data, meta: {} };
+  }
+
   if (!tail || tail === 'resume') {
     if (request.method !== 'POST') throw new Fault('UNSUPPORTED', 'Method unsupported.', 405);
     await service.authorize(room, true);
@@ -108,7 +129,7 @@ export async function executionRunRoute(
       project: input.project, task_id: input.task_id, run_id: input.run_id, attempt_id: input.attempt_id,
       principal: service.principal, lease_epoch: input.lease_epoch, intent_revision: input.intent_revision,
       cancel_generation: input.cancel_generation, model: input.model, prompt: input.prompt,
-      max_tokens: input.max_tokens, api_key: apiKey, cap_micro_usd: DEFAULT_BUDGET_CAP_USD_MICROS,
+      max_tokens: input.max_tokens, api_key: apiKey, cap_micro_usd: budgetCapUsdMicros(env as DispatchEnv),
       fetch: (target: string | URL | Request, init?: RequestInit) => globalThis.fetch(target, init),
     };
     const report = tail === 'resume'
@@ -129,6 +150,7 @@ export async function executionRunRoute(
       reason: input.reason,
     });
     if (!result.ok) {
+      if (result.failure === 'forbidden') throw new Fault('FORBIDDEN', 'Only the task creator or an owner can interrupt this task.', 403);
       if (result.failure === 'task_mismatch') throw new Fault('INVALID_INPUT', 'Run does not belong to task.');
       throw new Fault('NOT_FOUND', 'Task or execution run not found.', 404);
     }
@@ -148,6 +170,7 @@ export async function executionRunRoute(
       lease_epoch: input.lease_epoch,
       intent_revision: input.intent_revision,
       cancel_generation: input.cancel_generation,
+      execution_generation: input.execution_generation,
     });
     return { data: result, meta: {} };
   }

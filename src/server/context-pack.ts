@@ -3,6 +3,10 @@ import { instant } from './canonical.ts';
 import type { Database } from './db.ts';
 import { searchMessages, type Hit } from './memory.ts';
 import { validView, type MemoryItem } from './memory-items.ts';
+import type { FoldContextPack, FoldContextSections } from './fold-pack.ts';
+import type { OwnerMemory } from './memory-hook.ts';
+import { pinTable, type PinRow } from './pin-table.ts';
+import type { StandingMemory } from './standing-memory.ts';
 
 // OCG-W W4: Context OS pack. Context OS is not a fifth memory. It compiles a
 // task-relative active context from the durable stores (Notion 3ec8d918 §7).
@@ -273,4 +277,131 @@ export async function contextPack(db: Database, room: string, task: string, budg
   }
   const sections = assemble(items, itemCount, chosenMessages);
   return { sections, used_chars: used(sections), truncated: droppedItem || droppedMessage, lineage: lineageOf(sections) };
+}
+
+export interface ContextSourcePin extends PinRow {
+  /** SHA-256 of the exact raw source revision, not of a generated summary. */
+  source_sha256: string | null;
+  source_present: boolean;
+}
+
+export interface ContextData {
+  standing_memory?: StandingMemory;
+  owner_memory?: OwnerMemory;
+  sections: ContextSections | FoldContextSections;
+  /** UTF-16 code units in JSON.stringify(this entire data object). */
+  used_chars: number;
+  truncated: boolean;
+  lineage: string[];
+  fold_ids?: string[];
+  pin_table: ContextSourcePin[];
+  manifest: {
+    version: 1;
+    room: string;
+    /** Hash covers data with only used_chars and manifest removed, preserving key order. */
+    payload_sha256: string;
+    payload_utf8_bytes: number;
+    count_unit: 'utf16_code_units';
+    token_count: null;
+    token_status: 'unknown';
+    dropped_entries: number;
+    upstream_truncated: boolean;
+  };
+}
+
+async function hexDigest(text: string): Promise<string> {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))]
+    .map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** The hashable payload is explicit and contains every emitted context entry and pin. */
+export function contextPayload(data: ContextData): string {
+  const { used_chars: _size, manifest: _manifest, ...payload } = data;
+  void _size; void _manifest;
+  return JSON.stringify(payload);
+}
+
+function hasFoldSections(sections: ContextSections | FoldContextSections): sections is FoldContextSections {
+  return 'folds' in sections;
+}
+
+/**
+ * Budget the emitted `data` envelope after owner notices, source pins, lineage,
+ * and accounting metadata have been attached. The low-level pack budget only
+ * selects candidates; this final boundary is shared by plain and folded packs.
+ * Transport framing and provider-specific token overhead are not counted here.
+ */
+export async function fitContextData(
+  db: Database, room: string, pack: ContextPack | FoldContextPack, budgetChars: number,
+  owner: OwnerMemory | null, standing: StandingMemory | null,
+): Promise<ContextData> {
+  if (!Number.isInteger(budgetChars) || budgetChars < BUDGET_MIN || budgetChars > BUDGET_MAX) {
+    throw new Fault('INVALID_INPUT', 'budgetChars must be an integer from 500 to 20000');
+  }
+  const mandatoryIds = new Set(standing?.notices.map(entry => entry.id) ?? []);
+  const sections: ContextSections | FoldContextSections = {
+    decisions: pack.sections.decisions.filter(entry => !mandatoryIds.has(entry.id)),
+    skills: pack.sections.skills.filter(entry => !mandatoryIds.has(entry.id)),
+    facts: pack.sections.facts.filter(entry => !mandatoryIds.has(entry.id)),
+    ...(hasFoldSections(pack.sections) ? { folds: [...pack.sections.folds] } : {}),
+    messages: [...pack.sections.messages],
+  };
+  const candidates = pinTable(sections, standing);
+  const texts = await sourceTexts(db, room, candidates.map(entry => entry.source_message_id));
+  const digests = new Map<string, string>();
+  await Promise.all([...texts.byVersion].map(async ([key, raw]) => { digests.set(key, await hexDigest(raw)); }));
+  const withSource = (pin: PinRow): ContextSourcePin => {
+    const key = `${pin.source_version}\u0000${pin.source_message_id}`;
+    const present = pin.source_version !== null && texts.byVersion.has(key);
+    const current = texts.current.get(pin.source_message_id) ?? null;
+    return {
+      ...pin,
+      source_current_version: current,
+      status: !present ? 'missing' : pin.basis === 'inferred' ? 'inferred'
+        : pin.source_version !== current ? 'stale' : 'current',
+      source_sha256: present ? digests.get(key) ?? null : null,
+      source_present: present,
+    };
+  };
+  if (candidates.some(pin => pin.section === 'standing' && !withSource(pin).source_present)) {
+    throw new Fault('MANDATORY_SOURCE_MISSING', 'A standing notice has no readable pinned source revision in this room. Re-propose and review it against a current source.');
+  }
+  // Existing ranking is preserved. Notices are never drop candidates.
+  const tails = [sections.messages, ...(hasFoldSections(sections) ? [sections.folds] : []), sections.facts, sections.skills, sections.decisions];
+  let dropped = 0;
+  for (;;) {
+    const pins = pinTable(sections, standing).map(withSource);
+    const data: ContextData = {
+      ...(standing ? { standing_memory: standing } : {}),
+      ...(owner ? { owner_memory: owner } : {}),
+      sections,
+      used_chars: 0,
+      truncated: pack.truncated || dropped > 0,
+      // Preserve the existing fold lineage contract; fold source pins remain
+      // in pin_table while lineage lists standing/items/raw-message sources.
+      lineage: [...new Set(pins.filter(pin => pin.section !== 'folds').map(pin => pin.source_message_id))],
+      ...(hasFoldSections(sections) ? { fold_ids: sections.folds.map(fold => fold.fold_id) } : {}),
+      pin_table: pins,
+      manifest: {
+        version: 1, room, payload_sha256: '0'.repeat(64), payload_utf8_bytes: 0,
+        count_unit: 'utf16_code_units', token_count: null, token_status: 'unknown',
+        dropped_entries: dropped, upstream_truncated: pack.truncated,
+      },
+    };
+    const payload = contextPayload(data);
+    data.manifest.payload_utf8_bytes = new TextEncoder().encode(payload).length;
+    // used_chars includes its own decimal representation; converge to the exact size.
+    let size = JSON.stringify(data).length;
+    while (data.used_chars !== size) { data.used_chars = size; size = JSON.stringify(data).length; }
+    if (size <= budgetChars) {
+      data.manifest.payload_sha256 = await hexDigest(payload);
+      return data;
+    }
+    const tail = tails.find(entries => entries.length > 0);
+    if (!tail) {
+      throw new Fault('MANDATORY_EXCEEDS_BUDGET', `Mandatory context data renders to ${size} UTF-16 code units, over budget_chars=${budgetChars}. Standing and owner notices are never truncated.`);
+    }
+    tail.pop();
+    dropped += 1;
+  }
 }

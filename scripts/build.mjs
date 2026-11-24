@@ -26,6 +26,7 @@ await build({ ...worker, entryPoints: ['src/server/worker.ts'], outfile: 'dist/w
 await build({ ...worker, entryPoints: ['src/server/local.ts'], outfile: 'dist/local-worker.mjs' });
 await build({ ...common, entryPoints: ['src/cli/main.ts'], outfile: 'dist/workroom.mjs', platform: 'node' });
 await build({ ...common, entryPoints: ['src/cli/connection-plan.ts'], outfile: 'dist/workroom-connection-plan.mjs', platform: 'node' });
+await build({ ...common, entryPoints: ['scripts/orch/run.mts'], outfile: 'dist/workroom-orchestrator.mjs', platform: 'node' });
 await writeFile('dist/BUILD-BOUNDARY.txt', 'worker.mjs: production fail-closed. local-worker.mjs: synthetic local testing only; never deploy.\n');
 const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 if (!/^[0-9a-f]{40}$/.test(sourceSha)) throw new Error('provider receipt requires a full git HEAD');
@@ -34,5 +35,5 @@ await writeFile('dist/provider-receipt.json', JSON.stringify({
   provider_module: 'src/or-harness/client.ts',
   provider: 'openrouter',
   bundle_entry: 'src/server/worker.ts',
-  decision_chat_once: 'src/decision/llm-fallback.ts',
+  decision_chat_once: 'src/or-harness/client.ts',
 }, null, 2) + '\n');

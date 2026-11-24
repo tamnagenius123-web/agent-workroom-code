@@ -76,7 +76,7 @@ function mockLedger(): Ledger & { reserves: number; settles: number; projects: s
     async reserve(input) {
       this.reserves += 1;
       this.projects.push(input.project);
-      return { ok: true, reservation_id: `res-${this.reserves}` };
+      return { ok: true, reservation_id: `res-${this.reserves}`, created: true, state: 'open' };
     },
     async markPending() { /* hold stays pending */ },
     async settle() { this.settles += 1; },

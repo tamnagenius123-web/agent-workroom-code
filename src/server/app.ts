@@ -18,6 +18,8 @@ import { CONTEXT_COMPILE_READ_TOOLS } from './p5-context-wire.ts';
 import { RESEARCH_APPLICABILITY_READ_TOOLS } from './research-applicability-wire.ts';
 import { dispatchRoute } from './dispatch-wire.ts';
 import { executionRunRoute } from './run-supervisor-route.ts';
+import { runEvaluationRoute } from './run-evaluation.ts';
+import { EXECUTION_READ_TOOLS } from './execution-tools.ts';
 import { communityRoute } from './community-wire.ts';
 import { intentAgentRoute } from './intent.ts';
 import { decisionAgentRoute, DECISION_READ_TOOLS } from './decisions.ts';
@@ -36,6 +38,7 @@ for (const name of STATUS_READ_TOOLS) READ_TOOLS.add(name);
 for (const name of CONTEXT_COMPILE_READ_TOOLS) READ_TOOLS.add(name);
 for (const name of RESEARCH_APPLICABILITY_READ_TOOLS) READ_TOOLS.add(name);
 for (const name of DECISION_READ_TOOLS) READ_TOOLS.add(name);
+for (const name of EXECUTION_READ_TOOLS) READ_TOOLS.add(name);
 function writesIn(text: string): boolean {
   let parsed: unknown; try { parsed = JSON.parse(text); } catch { return false; }
   return (Array.isArray(parsed) ? parsed : [parsed]).some(m => !!m && typeof m === 'object' && (m as { method?: unknown }).method === 'tools/call'
@@ -136,7 +139,7 @@ export function createApp(authenticate: Authenticate, options: AppOptions = {}) 
       const file=await fileRoute(service,env,request,url,readJSON);
       if(file instanceof Response) return file;
       if(file) return Response.json(wrapped(file),{headers});
-      const conversation=await batchRoute(service,request,url,readJSON)??await taskRoute(service,request,url,readJSON)??await claimViewsRoute(service,request,url)??await g2Route(service,request,url,readJSON)??await receiptsRoute(service,request,url,readJSON)??await councilResearchRoute(service,request,url,readJSON)??await executionRunRoute(service,env,request,url,readJSON)??await dispatchRoute(service,env,request,url,readJSON)??await statusRoute(service,request,url,readJSON)??await communityRoute(service,env,request,url,readJSON);
+      const conversation=await batchRoute(service,request,url,readJSON)??await taskRoute(service,request,url,readJSON)??await claimViewsRoute(service,request,url)??await g2Route(service,request,url,readJSON)??await receiptsRoute(service,request,url,readJSON)??await councilResearchRoute(service,request,url,readJSON)??await runEvaluationRoute(service,request,url,readJSON)??await executionRunRoute(service,env,request,url,readJSON)??await dispatchRoute(service,env,request,url,readJSON)??await statusRoute(service,request,url,readJSON)??await communityRoute(service,env,request,url,readJSON);
       let body: Envelope;
       if(conversation) body=wrapped(conversation);
       else if (connection && request.method === 'GET' && url.pathname === '/connection/capabilities') body = { ok: true, data: await connection(), meta };
