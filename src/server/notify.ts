@@ -1,24 +1,16 @@
-// BOUNDARY CONTRACT — mirrors src/server/notify.ts in the gate MCP repo (agent-workroom-gate-mcp).
+// Webhook registration, mention resolution, transactional outbox planning, and outbound delivery.
 //
-// This repo (the public codebase) was split from the gate repo; webhook registration and
-// outbound webhook delivery live on the gate side and still fail closed here: nothing is
-// delivered or registered from this repo, and no wake credentials exist here, so wake auth
-// always resolves to NO_WAKE_AUTH. Phase 2 replaces those seams with calls to the gate MCP
-// server, which owns the real implementation.
-//
-// PARTIAL RESTORATION (D5-cu Track B, Group 2): resolveMentions, mentionsFor, planNotify and
-// recordAndEnqueue below are the real implementations, copied verbatim from repo (1)
-// agent-workroom main 7a47e59e (file sha256 e147b729c47882e9738d338735425cc9de6a09a6ff61e5b94be0182c79d61959;
-// the gate-MCP repo copy is byte-identical). They are pure/local recording behavior — mention
-// resolution against room membership/alias tables and transactional-outbox statement planning
-// in the same D1 batch as the message insert; no network send, no listener, no secret or env
-// access. Wake-proof's persisted stage reads the message_mentions rows they write. deliver,
-// Webhooks, checkWebhookUrl and the wake-auth helpers remain fail-closed stubs.
-import { boundaryUnavailable } from '../boundary.ts';
-import { ROOM } from './contracts.ts';
+// Restored from the pre-split implementation (8089647 / gate notify.ts) so agent-workroom-main
+// can serve workroom_set_webhook, workroom_webhook_get, workroom_webhook_delete,
+// workroom_webhook_test, immediate post-time notifications, and scheduled retries without
+// returning BoundaryUnavailableError. Scheduled sweeps (deliver without explicit ids) expire
+// pending rows older than STALE_OUTBOX_MS so re-enabling delivery does not burst stale backlog.
+import { Fault, ROOM } from './contracts.ts';
 import type { Database } from './db.ts';
 
 export type Defer = (p: Promise<unknown>) => void;
+const MAX_ATTEMPTS = 6;
+const enc = new TextEncoder();
 
 // @everyone / @alias (alias table) -> active room members. Sender is never notified of its own message.
 export async function resolveMentions(db: Database, text: string, sender: string) {
@@ -74,51 +66,156 @@ export async function recordAndEnqueue(db: Database, message: { id: string; acto
   return { mentions: p.mentions, deliveries: p.deliveries };
 }
 
-export const CLAIM_MS = 60_000; // > the 8 s fetch timeout, so a live attempt's lease never lapses mid-flight
+async function hmac(secret: string, data: string) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return [...new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(data)))].map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
+export const CLAIM_MS = 60_000; // > the 8 s fetch timeout, so a live attempt's lease never lapses mid-flight
+export const STALE_OUTBOX_MS = 60 * 60 * 1000; // expire pending rows older than 1 h on scheduled sweeps
+
+// Older schema snapshots (pre-0017) have no claim columns: fall back to the unfenced path only there.
+async function hasClaim(db: Database) {
+  try { await db.prepare('SELECT claim_token FROM webhook_outbox LIMIT 0').all(); return true; } catch (e) { if (/no such column/i.test(String((e as Error)?.message ?? e))) return false; throw e; }
+}
+
+// Per-principal wake auth for automation ingress (e.g. Grok Bot routine 'workroom-wake').
+// Secret GROK_WAKE_KEY is set on the Worker by the owner; never stored in D1. Unset => no header.
+// Exact-destination pin: the header is attached only when the outbox row's URL equals the non-secret pinned URL
+// (GROK_WAKE_URL). Unset pin, unset key, or any URL change => no header (fail closed; receiver 401 is not a wake).
+const WAKE_KEY_ENV: Record<string, { key: string; url: string }> = {
+  'agent:grok': { key: 'GROK_WAKE_KEY', url: 'GROK_WAKE_URL' },
+  'agent:dots': { key: 'DOTS_WAKE_KEY', url: 'DOTS_WAKE_URL' },
+};
+
+// Immutable per-invocation auth context: built from this invocation's env and passed explicitly into deliver,
+// so overlapping invocations (different env, or empty env) can never swap keys under an in-flight delivery.
 export type WakeAuth = Readonly<Record<string, Readonly<{ key: string; url: string }>>>;
 export const NO_WAKE_AUTH: WakeAuth = Object.freeze({});
 
-// No wake credentials exist in this repo, so no invocation ever carries wake auth.
-export function wakeAuthFrom(_env: object): WakeAuth {
-  void _env;
-  return NO_WAKE_AUTH;
+export function wakeAuthFrom(env: object): WakeAuth {
+  const e = env as Record<string, unknown>, out: Record<string, Readonly<{ key: string; url: string }>> = {};
+  for (const [principal, n] of Object.entries(WAKE_KEY_ENV)) {
+    const k = e[n.key], u = e[n.url];
+    if (typeof k === 'string' && k && typeof u === 'string' && u) out[principal] = Object.freeze({ key: k, url: u });
+  }
+  return Object.freeze(out);
 }
 
-// With no wake auth configured, the header set is always empty.
-export function wakeAuthHeader(_auth: WakeAuth, _principal: string | undefined, _url: string): Record<string, string> {
-  void _auth; void _principal; void _url;
-  return {};
+export function wakeAuthHeader(auth: WakeAuth, principal: string | undefined, url: string): Record<string, string> {
+  const w = principal && Object.hasOwn(auth, principal) ? auth[principal] : undefined;
+  return w && url === w.url ? { Authorization: 'Bearer ' + w.key } : {};
 }
 
-// Outbound delivery is gate behavior; callers that tolerate delivery failure catch this throw.
 export async function deliver(
-  _db: Database,
-  _ids?: string[],
-  _auth: WakeAuth = NO_WAKE_AUTH,
-  _fetchImpl: typeof fetch = fetch,
+  db: Database,
+  ids?: string[],
+  auth: WakeAuth = NO_WAKE_AUTH,
+  fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
-  return boundaryUnavailable('src/server/notify.ts', 'deliver', _db, _ids, _auth, _fetchImpl);
+  const now = Date.now(), fenced = await hasClaim(db);
+  if (!ids) {
+    const cutoff = now - STALE_OUTBOX_MS;
+    if (fenced) {
+      await db.prepare(
+        `UPDATE webhook_outbox SET status='failed',last_error='expired stale',terminal_at=?,claim_token=NULL,claimed_until=NULL WHERE status='pending' AND created_at<? AND (claimed_until IS NULL OR claimed_until<=?)`,
+      ).bind(now, cutoff, now).all();
+    } else {
+      await db.prepare(
+        `UPDATE webhook_outbox SET status='failed',last_error='expired stale',terminal_at=? WHERE status='pending' AND created_at<?`,
+      ).bind(now, cutoff).all();
+    }
+  }
+  const rows = ids ? (ids.length ? (await db.prepare(`SELECT o.id,o.principal_id,o.payload_json,o.attempts,w.url,w.secret FROM webhook_outbox o JOIN webhooks w ON w.principal_id=o.principal_id WHERE o.status='pending' AND o.id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all<Row>()).results : [])
+    : (await db.prepare(`SELECT o.id,o.principal_id,o.payload_json,o.attempts,w.url,w.secret FROM webhook_outbox o JOIN webhooks w ON w.principal_id=o.principal_id WHERE o.status='pending' AND o.next_at<=? ORDER BY o.next_at LIMIT 25`).bind(now).all<Row>()).results;
+  let sent = 0;
+  await Promise.all(rows.map(async r => {
+    // Claim: exactly one worker holds a pending row at a time. attempts comes from the claimed row, not the stale read.
+    const token = fenced ? crypto.randomUUID() : null;
+    if (fenced) {
+      const claimNow = Date.now();
+      const c = await db.prepare(`UPDATE webhook_outbox SET claim_token=?, claimed_until=? WHERE id=? AND status='pending' AND (claimed_until IS NULL OR claimed_until<=?) RETURNING attempts`)
+        .bind(token, claimNow + CLAIM_MS, r.id, claimNow).first<{ attempts: number }>();
+      if (!c) return;
+      r.attempts = c.attempts;
+    }
+    sent++;
+    const ts = String(Math.floor(Date.now() / 1000)), body = r.payload_json;
+    let status: number | null = null, error: string | null = null;
+    try {
+      const res = await fetchImpl(r.url, {
+        method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(8000), headers: {
+          'Content-Type': 'application/json', 'User-Agent': 'agent-workroom-webhook/1', 'X-Workroom-Delivery': r.id, 'X-Workroom-Timestamp': ts,
+          'X-Workroom-Signature': 'sha256=' + await hmac(r.secret, ts + '.' + body), ...wakeAuthHeader(auth, r.principal_id, r.url),
+        }, body,
+      });
+      status = res.status; await res.body?.cancel();
+    } catch (e) { error = String((e as Error)?.name ?? 'error').slice(0, 100); }
+    const doneAt = Date.now();
+    const ok = status !== null && status >= 200 && status < 300, attempts = r.attempts + 1;
+    const next = doneAt + Math.min(3600, 30 * 2 ** (attempts - 1)) * 1000;
+    const args = [ok ? 'delivered' : attempts >= MAX_ATTEMPTS ? 'failed' : 'pending', attempts, next, status, ok ? null : error ?? 'HTTP ' + status, ok ? doneAt : null, ok || attempts >= MAX_ATTEMPTS ? doneAt : null, r.id];
+    // Fenced completion: only the current claim holder, and only while the row is still pending, may write the outcome.
+    if (fenced) await db.prepare(`UPDATE webhook_outbox SET status=?,attempts=?,next_at=?,last_status=?,last_error=?,delivered_at=?,terminal_at=?,claim_token=NULL,claimed_until=NULL WHERE id=? AND claim_token=? AND status='pending'`).bind(...args, token).all();
+    else await db.prepare(`UPDATE webhook_outbox SET status=?,attempts=?,next_at=?,last_status=?,last_error=?,delivered_at=?,terminal_at=? WHERE id=? AND status='pending'`).bind(...args).all();
+  }));
+  return sent;
 }
+interface Row { id: string; principal_id?: string; payload_json: string; attempts: number; url: string; secret: string }
 
-// Webhook URL allow-listing is gate behavior; no URL is approved from this repo.
-export function checkWebhookUrl(_raw: string): string {
-  return boundaryUnavailable('src/server/notify.ts', 'checkWebhookUrl', _raw);
+const PRIVATE = [/^localhost$/, /\.localhost$/, /\.local$/, /\.internal$/, /^metadata\./, /^agent-workroom-.*\.workers\.dev$/];
+const ALLOWED_WORKER = /^agent-workroom-dots-wake\.[a-z0-9-]+\.workers\.dev$/;
+export function checkWebhookUrl(raw: string) {
+  let u: URL; try { u = new URL(raw); } catch { throw new Fault('INVALID_INPUT', 'Invalid webhook URL.'); }
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (u.protocol !== 'https:') throw new Fault('INVALID_INPUT', 'Webhook URL must use https.');
+  if (u.username || u.password) throw new Fault('INVALID_INPUT', 'Webhook URL must not contain credentials.');
+  if (/^[\d.]+$/.test(host) || host.includes(':')) throw new Fault('INVALID_INPUT', 'Use a public DNS hostname, not an IP literal.');
+  if (!host.includes('.') || (!ALLOWED_WORKER.test(host) && PRIVATE.some(p => p.test(host)))) throw new Fault('INVALID_INPUT', 'Private or internal webhook hosts are not allowed.');
+  if (u.port && u.port !== '443') throw new Fault('INVALID_INPUT', 'Webhook URL must use port 443.');
+  return u.href;
 }
 
 export class Webhooks {
-  constructor(_db: Database, _principal: string, _auth: WakeAuth = NO_WAKE_AUTH) {
-  void _db; void _principal; void _auth;}
-  async set(_input: { url: string; all_messages: boolean; rotate_secret: boolean }) {
-    return boundaryUnavailable('src/server/notify.ts', 'Webhooks.set', _input);
+  constructor(private db: Database, private principal: string, private auth: WakeAuth = NO_WAKE_AUTH) {}
+  async set(input: { url: string; all_messages: boolean; rotate_secret: boolean }) {
+    const url = checkWebhookUrl(input.url), now = Date.now();
+    const old = await this.db.prepare('SELECT secret FROM webhooks WHERE principal_id=?').bind(this.principal).first<{ secret: string }>();
+    const fresh = !old || input.rotate_secret;
+    const secret = fresh ? 'whsec_' + [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join('') : old!.secret;
+    await this.db.prepare(`INSERT INTO webhooks(principal_id,url,secret,all_messages,created_at,updated_at) VALUES (?,?,?,?,?,?)
+      ON CONFLICT(principal_id) DO UPDATE SET url=excluded.url,secret=excluded.secret,all_messages=excluded.all_messages,updated_at=excluded.updated_at`)
+      .bind(this.principal, url, secret, input.all_messages ? 1 : 0, now, now).all();
+    return {
+      data: {
+        principal_id: this.principal, url, all_messages: input.all_messages, ...(fresh ? { signing_secret: secret } : {}),
+        signing_secret_returned: fresh, signature: 'X-Workroom-Signature: sha256=hex(HMAC_SHA256(secret, X-Workroom-Timestamp + "." + raw_body))',
+      },
+      meta: { note: fresh ? 'Store signing_secret now; it is shown only once. Rotate with rotate_secret=true.' : 'Existing secret kept.' },
+    };
   }
   async get() {
-    return boundaryUnavailable('src/server/notify.ts', 'Webhooks.get');
+    const w = await this.db.prepare('SELECT url,all_messages,updated_at FROM webhooks WHERE principal_id=?').bind(this.principal).first<{ url: string; all_messages: number; updated_at: number }>();
+    const recent = (await this.db.prepare('SELECT id,message_id,status,attempts,last_status,last_error,created_at,delivered_at FROM webhook_outbox WHERE principal_id=? ORDER BY created_at DESC LIMIT 10')
+      .bind(this.principal).all()).results;
+    return { data: { webhook: w ? { url: w.url, all_messages: w.all_messages === 1, updated_at: new Date(w.updated_at).toISOString() } : null, recent_deliveries: recent }, meta: {} };
   }
   async remove() {
-    return boundaryUnavailable('src/server/notify.ts', 'Webhooks.remove');
+    const now = Date.now();
+    await this.db.batch([
+      this.db.prepare(`UPDATE webhook_outbox SET status='failed',last_error='webhook removed',terminal_at=? WHERE principal_id=? AND status='pending'`).bind(now, this.principal),
+      this.db.prepare('DELETE FROM webhooks WHERE principal_id=?').bind(this.principal),
+    ]);
+    return { data: { removed: true }, meta: {} };
   }
   async test() {
-    return boundaryUnavailable('src/server/notify.ts', 'Webhooks.test');
+    if (!await this.db.prepare('SELECT 1 FROM webhooks WHERE principal_id=?').bind(this.principal).first()) throw new Fault('NOT_FOUND', 'No webhook registered.', 404);
+    const id = crypto.randomUUID(), now = Date.now();
+    const payload = { type: 'workroom.ping', delivery_id: id, room: ROOM, message_id: null, sender: this.principal, recipient: this.principal, mentioned: false, mentions: [], preview: 'webhook test', created_at: new Date().toISOString() };
+    await this.db.prepare(`INSERT INTO webhook_outbox(id,principal_id,message_id,payload_json,status,attempts,next_at,created_at) VALUES (?,?,'ping',?,'pending',0,?,?)`)
+      .bind(id, this.principal, JSON.stringify(payload), now, now).all();
+    await deliver(this.db, [id], this.auth);
+    const r = await this.db.prepare('SELECT status,attempts,last_status,last_error FROM webhook_outbox WHERE id=?').bind(id).first<Record<string, unknown>>();
+    return { data: { delivery_id: id, ...r }, meta: {} };
   }
 }
