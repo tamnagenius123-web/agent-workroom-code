@@ -1,0 +1,128 @@
+name: AP-WR-LEAN-41 pinned verification
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths: ['.github/workflows/lean-pinned-verification.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  lean-pinned:
+    if: github.repository == 'tamnagenius123-web/agent-workroom-code' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'verify/ap-wr-lean-41-bc7bfbf'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: tamnagenius123-web/agent-workroom-code
+          ref: bc7bfbf172867b3620a043749df2390e068314ee
+          path: proof-source
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: leanprover/lean4checker
+          ref: e11f65c651edd58d68ba260015d2bfde5102cd7f
+          path: checker-source
+          persist-credentials: false
+      - name: Check source identities
+        run: |
+          test "$(git -C proof-source rev-parse HEAD)" = bc7bfbf172867b3620a043749df2390e068314ee
+          test "$(git -C checker-source rev-parse HEAD)" = e11f65c651edd58d68ba260015d2bfde5102cd7f
+          git -C proof-source rev-parse HEAD
+          git -C checker-source rev-parse HEAD
+          cmp proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/lean-toolchain checker-source/lean-toolchain
+          test "$(cat checker-source/lean-toolchain)" = leanprover/lean4:v4.19.0
+      - name: Install pinned Lean toolchain
+        uses: leanprover/lean-action@ba3fdfe5c4476c925da13bf11a005ddb47e47aee
+        with:
+          lake-package-directory: checker-source
+          auto-config: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Build the matching checker
+        working-directory: checker-source
+        run: lake build lean4checker
+      - name: Clean proof build and save exit evidence
+        id: clean
+        working-directory: proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1
+        run: |
+          git show HEAD:./PROOF_AXIOMS.tsv > "$RUNNER_TEMP/lean41-baseline-axioms.tsv"
+          mkdir -p evidence
+          # Remove checked-in results from the disposable checkout before generating evidence.
+          rm -f PROOF_AXIOMS.tsv LEAN_BUILD_RECEIPT.json
+          clean_exit=0
+          lake clean > evidence/lean-clean.log 2>&1 || clean_exit=$?
+          printf 'lake clean exit_code=%s\n' "$clean_exit" | tee evidence/lean-clean-exit.txt
+          cat evidence/lean-clean.log
+          exit "$clean_exit"
+      - name: Rebuild, audit axioms and replay in a fresh kernel context
+        working-directory: proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1
+        run: |
+          # The previous step ran clean separately because verify.py does not record its status.
+          python3 scripts/verify.py --checker "$GITHUB_WORKSPACE/checker-source/.lake/build/bin/lean4checker"
+          cat LEAN_BUILD_RECEIPT.json
+      - name: Verify 206 axiom rows and stage exit evidence
+        working-directory: proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1
+        run: |
+          python3 - "$RUNNER_TEMP/lean41-baseline-axioms.tsv" <<'PY'
+          import csv
+          import hashlib
+          import io
+          import json
+          import sys
+          from pathlib import Path
+
+          baseline_raw = Path(sys.argv[1]).read_bytes()
+          generated_raw = Path("PROOF_AXIOMS.tsv").read_bytes()
+          hashes = {
+              "baseline_tsv_sha256": hashlib.sha256(baseline_raw).hexdigest(),
+              "generated_tsv_sha256": hashlib.sha256(generated_raw).hexdigest(),
+          }
+          Path("evidence/axiom-tsv-sha256.json").write_text(json.dumps(hashes, indent=2) + "\n")
+          print(json.dumps(hashes))
+
+          # Compare every byte after changing only CRLF to LF.
+          baseline = baseline_raw.replace(b"\r\n", b"\n")
+          generated = generated_raw.replace(b"\r\n", b"\n")
+          if generated != baseline:
+              raise SystemExit("Generated axiom TSV differs from baseline after CRLF/LF normalization")
+          rows = list(csv.reader(io.StringIO(baseline.decode("utf-8"), newline=""),
+                                 delimiter="\t", strict=True))
+          if len(rows) != 207 or any(len(row) != 5 for row in rows):
+              raise SystemExit("Expected one header and exactly 206 five-cell axiom rows")
+
+          receipt = json.loads(Path("LEAN_BUILD_RECEIPT.json").read_text())
+          if receipt["theorems_audited"] != 206 or receipt["unexpected_axioms"] != []:
+              raise SystemExit("Axiom receipt count or allowlist result differs")
+          if Path("evidence/lean-clean-exit.txt").read_text() != "lake clean exit_code=0\n":
+              raise SystemExit("Missing successful lake clean exit record")
+          for stage, log in (
+              ("build", "evidence/lean-build.log"),
+              ("axiom_audit", "evidence/axiom-audit.log"),
+              ("fresh_kernel_recheck", "evidence/kernel-fresh.log"),
+          ):
+              entry = receipt[stage]
+              if not entry or entry["exit_code"] != 0 or entry["log"] != log:
+                  raise SystemExit(f"Missing successful {stage} exit record")
+              if hashlib.sha256(Path(log).read_bytes()).hexdigest() != entry["log_sha256"]:
+                  raise SystemExit(f"Log hash differs from the {stage} receipt")
+          print("Pinned axiom inventory matched: 206 rows; clean/build/axiom/fresh all exit 0")
+          PY
+      - name: Preserve public Lean evidence
+        if: ${{ always() && !cancelled() && (steps.clean.outcome == 'success' || steps.clean.outcome == 'failure') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: lean41-bc7bfbf-evidence-${{ github.run_attempt }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/PROOF_AXIOMS.tsv
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/LEAN_BUILD_RECEIPT.json
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/axiom-tsv-sha256.json
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/lean-clean-exit.txt
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/lean-clean.log
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/lean-build.log
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/axiom-audit.log
+            proof-source/research/formal-verification/AP-WR-LEAN-41-20261122-r1/evidence/kernel-fresh.log
