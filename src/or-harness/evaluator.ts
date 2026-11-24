@@ -44,10 +44,19 @@ export interface Cohort {
   items: readonly EvalItem[];
 }
 
+/**
+ * The one canonical item order for a cohort: ascending item_id. The digest
+ * is computed over this order and execution follows this order, so the input
+ * array order of a cohort never affects either one.
+ */
+export function canonicalItems(cohort: Cohort): EvalItem[] {
+  return [...cohort.items]
+    .sort((a, b) => (a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0));
+}
+
 /** Content address of the cohort: canonical item order, so any drift changes the digest. */
 export function cohortDigest(cohort: Cohort): string {
-  const items = [...cohort.items]
-    .sort((a, b) => (a.item_id < b.item_id ? -1 : a.item_id > b.item_id ? 1 : 0))
+  const items = canonicalItems(cohort)
     .map(item => ({ item_id: item.item_id, prompt: item.prompt, expect_text: item.expect_text }));
   return sha256(JSON.stringify({ cohort_id: cohort.cohort_id, version: cohort.version, items }));
 }
@@ -57,12 +66,16 @@ export function shardIndexFor(item_id: string, shard_count: number): number {
   return parseInt(sha256(item_id).slice(0, 8), 16) % shard_count;
 }
 
-/** The shard is a pure function of the cohort: same cohort, same shard, byte for byte. */
+/**
+ * The shard is a pure function of the cohort: same cohort, same shard, byte
+ * for byte. Items come back in canonical (digest) order, never in the input
+ * array's order, so replay execution order is fixed by the digest itself.
+ */
 export function selectShard(cohort: Cohort, shard_count: number, shard_index: number): EvalItem[] {
   if (!Number.isSafeInteger(shard_index) || shard_index < 0 || shard_index >= shard_count) {
     throw new Error('shard_index out of range');
   }
-  return cohort.items.filter(item => shardIndexFor(item.item_id, shard_count) === shard_index);
+  return canonicalItems(cohort).filter(item => shardIndexFor(item.item_id, shard_count) === shard_index);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +219,7 @@ export interface EvaluatorDeps {
   apiKey: string;
   model: string;
   store: EvalStore;
-  /** When set, a cohort whose digest differs is rejected (RC4 stays unproven). */
+  /** When set, a cohort whose digest differs is rejected before any replay or reservation (RC4 stays unproven). */
   pinned_cohort_digest?: string;
   max_tokens?: number;
   timeout_ms?: number;
@@ -326,6 +339,19 @@ export function createEvaluator(deps: EvaluatorDeps) {
     const digest = cohortDigest(cohort);
     const items = selectShard(cohort, shard_count, shard_index);
     const item_ids = items.map(item => item.item_id);
+    // The pinned-digest gate runs before any replay: a mismatched cohort is
+    // rejected here, so no dispatch is made and no budget is reserved on the
+    // evaluator's ledger for a cohort that was never going to be accepted.
+    if (deps.pinned_cohort_digest !== undefined && deps.pinned_cohort_digest !== digest) {
+      return {
+        outcome: {
+          disposition: 'HOLD', reasons: ['cohort_digest_mismatch'], receipt: null, cohort_digest: digest,
+          shard_index, shard_count, item_ids, replay: { settled: 0, scored: 0, total: 0, micro_usd: 0 },
+          rolled_back: false, journal_entry: null,
+        },
+        staged_id: null,
+      };
+    }
     if (items.length === 0) {
       return {
         outcome: {
@@ -338,11 +364,10 @@ export function createEvaluator(deps: EvaluatorDeps) {
     }
 
     const { run: replayRun, replay } = await replayShard(cohort, digest, shard_count, shard_index, items);
-    const pinned_ok = deps.pinned_cohort_digest === undefined || deps.pinned_cohort_digest === digest;
-    const cohortEvidence = pinned_ok
-      ? `cohort digest=${digest} version=${cohort.version} items=${cohort.items.length} shard_items=${items.length}`
-      : null;
-    const cohortRun: CaseRun = { case_id: 'RC4', evidence: cohortEvidence, evidence_sha256: cohortEvidence ? sha256(cohortEvidence) : null };
+    // Reaching here means the pinned-digest gate above already passed (or no
+    // pin is set), so the cohort evidence always names the verified digest.
+    const cohortEvidence = `cohort digest=${digest} version=${cohort.version} items=${cohort.items.length} shard_items=${items.length}`;
+    const cohortRun: CaseRun = { case_id: 'RC4', evidence: cohortEvidence, evidence_sha256: sha256(cohortEvidence) };
 
     const observation: ReceiptObservation = {
       consumer: deps.consumer,
@@ -365,7 +390,7 @@ export function createEvaluator(deps: EvaluatorDeps) {
       runs: evaluatorRuns(record, deps, replayRun, cohortRun),
     };
     const evaluation = evaluateVerifierReceipt(observation);
-    const reasons = pinned_ok ? evaluation.reasons : [...evaluation.reasons, 'cohort_digest_mismatch'];
+    const reasons = evaluation.reasons;
     const draft: JournalDraft = {
       cohort_digest: digest,
       shard_index,
@@ -421,13 +446,16 @@ export function createEvaluator(deps: EvaluatorDeps) {
     const shards: EvaluationOutcome[] = [];
     const [canary_index, ...rest] = order as [number, ...number[]];
     const canary = await evaluateShardInternal(record, cohort, shard_count, canary_index);
-    if (canary.staged_id === null || canary.outcome.disposition === 'HOLD') {
-      if (canary.staged_id !== null) {
-        const entry = deps.store.rollback(canary.staged_id, 'canary_hold');
-        shards.push({ ...canary.outcome, rolled_back: true, journal_entry: entry });
-      } else {
-        shards.push(canary.outcome);
-      }
+    if (canary.staged_id === null) {
+      // Nothing was staged (empty shard, or the cohort was rejected at the
+      // pinned-digest gate before any replay), so there is nothing to roll
+      // back; the evaluation simply stops here.
+      shards.push(canary.outcome);
+      return { disposition: 'HOLD', rolled_back: false, shards };
+    }
+    if (canary.outcome.disposition === 'HOLD') {
+      const entry = deps.store.rollback(canary.staged_id, 'canary_hold');
+      shards.push({ ...canary.outcome, rolled_back: true, journal_entry: entry });
       return { disposition: 'HOLD', rolled_back: true, shards };
     }
     const canary_entry = deps.store.commit(canary.staged_id);

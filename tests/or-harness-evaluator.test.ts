@@ -220,6 +220,76 @@ test('a drifted cohort is rejected against the pinned digest', async () => {
   assert.ok(outcome.reasons.includes('cohort_digest_mismatch'));
 });
 
+test('digest mismatch is rejected before any dispatch or reservation', async () => {
+  let fetchCalls = 0;
+  const base = mockFetch();
+  const counting: FetchLike = async (input, init) => {
+    fetchCalls += 1;
+    return base(input, init);
+  };
+  const ledger = mockLedger();
+  const store = new MemoryEvalStore();
+  const evaluator = createEvaluator({
+    evaluator_id: 'agent:evaluator-g5',
+    verifier_lineage: { method: 'evaluator-method', dependencies: ['dep-b'] },
+    consumer: 'P1', next_maker: 'agent:producer', ledger,
+    fetchImpl: counting, apiKey: 'test-key', model: MODEL, store,
+    pinned_cohort_digest: 'f'.repeat(64),
+  });
+  const outcome = await evaluator.evaluateShard(record(), cohort(), 2, 0);
+  assert.equal(outcome.disposition, 'HOLD');
+  assert.ok(outcome.reasons.includes('cohort_digest_mismatch'));
+  assert.equal(outcome.receipt, null);
+  // The gate fires before replay: zero provider calls, zero reservations,
+  // and nothing staged, sealed, or journaled.
+  assert.equal(fetchCalls, 0);
+  assert.equal(ledger.reserves, 0);
+  assert.equal(ledger.settles, 0);
+  assert.equal(store.receipts().length, 0);
+  assert.equal(store.entries().length, 0);
+  const whole = await evaluator.evaluateCohort(record(), cohort(), 2);
+  assert.equal(whole.disposition, 'HOLD');
+  assert.equal(whole.rolled_back, false);
+  assert.equal(fetchCalls, 0);
+  assert.equal(ledger.reserves, 0);
+});
+
+test('execution follows the canonical digest order, not the input order', async () => {
+  const fixed = cohort();
+  const permuted: Cohort = { ...fixed, items: [...fixed.items].reverse() };
+  // Same content in a different input order is the same cohort...
+  assert.equal(cohortDigest(permuted), cohortDigest(fixed));
+  // ...and selects byte-identical shards in canonical (item_id) order.
+  for (const index of [0, 1]) {
+    assert.deepEqual(selectShard(permuted, 2, index), selectShard(fixed, 2, index));
+    const ids = selectShard(fixed, 2, index).map(item => item.item_id);
+    assert.deepEqual(ids, [...ids].sort());
+  }
+  // Replay dispatch order is therefore also identical for both inputs.
+  const runOrder = async (input: Cohort): Promise<{ prompts: string[]; item_ids: readonly string[] }> => {
+    const prompts: string[] = [];
+    const base = mockFetch();
+    const recording: FetchLike = async (url, init) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as { messages: { content: string }[] };
+        prompts.push(body.messages[0]?.content ?? '');
+      }
+      return base(url, init);
+    };
+    const evaluator = createEvaluator({
+      evaluator_id: 'agent:evaluator-g5',
+      verifier_lineage: { method: 'evaluator-method', dependencies: ['dep-b'] },
+      consumer: 'P1', next_maker: 'agent:producer', ledger: mockLedger(),
+      fetchImpl: recording, apiKey: 'test-key', model: MODEL, store: new MemoryEvalStore(),
+    });
+    const outcome = await evaluator.evaluateShard(record(), input, 2, 0);
+    return { prompts, item_ids: outcome.item_ids };
+  };
+  const fromFixed = await runOrder(fixed);
+  const fromPermuted = await runOrder(permuted);
+  assert.deepEqual(fromPermuted, fromFixed);
+});
+
 test('a replay that does not reproduce the expected output holds', async () => {
   const shard0 = selectShard(cohort(), 2, 0);
   const victim = shard0[0]?.item_id ?? 'item-a';
