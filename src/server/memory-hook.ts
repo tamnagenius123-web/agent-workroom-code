@@ -10,6 +10,11 @@ import { activeOwnerDecisions, type OwnerDecision } from './owner-decisions.ts';
 export const PINNED_LIMIT = 8;
 export const RECALL_LIMIT = 5;
 const TERM_LIMIT = 12;
+/** Build-stage per-entry caps: pin() clips a decision's normalized text to this length and
+ * recall clips its verbatim text to VERBATIM_CHARS when the standing block is assembled.
+ * These caps are part of the block's definition (they apply to every block, whatever the
+ * caller's budget is); they are not budget fitting. The no-truncation guarantee below is
+ * about the assembled block: it is never clipped further to fit a caller's budget. */
 const NORMALIZED_CHARS = 160;
 const VERBATIM_CHARS = 300;
 export type HookKind = 'handoff' | 'question' | 'decision';
@@ -59,15 +64,18 @@ export function standingChars(om: OwnerMemory): number {
 }
 
 /**
- * U7/G4 standing-notice guard: the approved standing block is never truncated to fit a budget.
- * When the block alone exceeds the caller's budget the call fails instead of silently
- * exceeding the budget or clipping a notice. A null block (no decision data) always fits.
+ * U7/G4 standing-notice guard: once assembled, the standing block is never truncated to
+ * fit a caller's budget. When the block alone exceeds the budget the call fails instead
+ * of silently exceeding the budget or clipping the assembled block further. (Per-entry
+ * text was already capped at build time — see NORMALIZED_CHARS / VERBATIM_CHARS — so
+ * "never truncated" means the assembled block is delivered whole or not at all, not that
+ * source decision text enters the block unabridged.) A null block always fits.
  */
 export function assertStandingFits(om: OwnerMemory | null, budgetChars: number, field: string): void {
   if (!om) return;
   const size = standingChars(om);
   if (size > budgetChars) {
-    throw new Fault('INVALID_INPUT', `Standing owner notices render to ${size} chars, over the ${field} budget of ${budgetChars}. Standing notices are never truncated; raise ${field}.`);
+    throw new Fault('INVALID_INPUT', `Standing owner notices render to ${size} chars, over the ${field} budget of ${budgetChars}. Standing notices are never truncated after assembly; raise ${field}.`);
   }
 }
 
@@ -77,6 +85,8 @@ export function assertStandingFits(om: OwnerMemory | null, budgetChars: number, 
  * the pinned core or the recall set, whatever the source list carries. Ordering is total
  * ((ts_kst, id) for the pinned core), so the same decision set serializes byte-identically
  * regardless of source row order. Returns null when there is no decision data at all.
+ * Entry text is capped here, at build time: pinned entries carry normalized text clipped
+ * to NORMALIZED_CHARS and recalled entries carry verbatim text clipped to VERBATIM_CHARS.
  */
 export function buildOwnerMemory(decisions: readonly OwnerDecision[] | null, input: { kind: HookKind; text: string }): OwnerMemory | null {
   if (!decisions) return null;

@@ -9,9 +9,10 @@ import { Workroom } from '../src/server/domain.ts';
 import type { ContextSections, PackEntry } from '../src/server/context-pack.ts';
 import type { FoldContextSections } from '../src/server/fold-pack.ts';
 import {
-  PINNED_LIMIT, assertStandingFits, buildOwnerMemory,
+  PINNED_LIMIT, assertStandingFits, buildOwnerMemory, standingChars,
   type HookKind, type OwnerMemory,
 } from '../src/server/memory-hook.ts';
+import { fitBrief, type BriefDraft } from '../src/server/room-brief.ts';
 import { pinTable } from '../src/server/pin-table.ts';
 import type { OwnerDecision } from '../src/server/owner-decisions.ts';
 import { proposeItem, type MemoryItem } from '../src/server/memory-items.ts';
@@ -94,6 +95,68 @@ test('assertStandingFits fails instead of truncating an over-budget standing blo
   );
   assertStandingFits(big, 20000, 'budget_chars');
   assertStandingFits(null, 500, 'budget_chars');
+});
+
+test('per-entry text is capped at build time; the assembled block is then delivered whole or not at all', () => {
+  const pinnedOm = buildOwnerMemory([decision({ normalized: 'n'.repeat(500) })], { kind: 'handoff', text: 'push' });
+  assert.ok(pinnedOm);
+  // Build-stage cap: the pinned entry carries normalized text clipped to 160 chars + ellipsis.
+  assert.equal(pinnedOm.pinned[0]?.normalized, 'n'.repeat(160) + '…');
+  const recalledOm = buildOwnerMemory(
+    [decision({ id: 'od-r', direct: false, topics: ['cap'], normalized: 'cap ' + 'n'.repeat(500), verbatim: 'v'.repeat(800) })],
+    { kind: 'handoff', text: 'cap' },
+  );
+  assert.ok(recalledOm);
+  // Build-stage cap: the recalled entry carries verbatim text clipped to 300 chars + ellipsis.
+  assert.equal(recalledOm.recalled[0]?.verbatim, 'v'.repeat(300) + '…');
+  // After assembly there is no further clipping: a budget of exactly the block size passes
+  // and leaves the block byte-identical; one char less fails instead of truncating it.
+  const size = standingChars(pinnedOm);
+  const before = JSON.stringify(pinnedOm);
+  assertStandingFits(pinnedOm, size, 'budget_chars');
+  assert.equal(JSON.stringify(pinnedOm), before);
+  assert.throws(() => assertStandingFits(pinnedOm, size - 1, 'budget_chars'), /never truncated after assembly/);
+});
+
+function briefDraft(over: Partial<BriefDraft> = {}): BriefDraft {
+  return {
+    at: AT, room: ROOM, decisions: [], skills: [],
+    review_queue: { pending_items: 0, pending_edges: 0, experience_awaiting_verdict: 0, pending_folds: 0 },
+    recent_kept_experience: [], open_tasks: [], maxChars: 4000,
+    ownerMemory: null, decisionsOmitted: 0, extraNotes: [], ...over,
+  };
+}
+
+test('fitBrief fails when mandatory fields plus the standing block exceed max_chars, even if the block alone fits', () => {
+  const om = buildOwnerMemory(FIXTURE, { kind: 'handoff', text: 'merge gate' });
+  assert.ok(om);
+  // The block alone fits this budget exactly (assertStandingFits passes), but the brief's
+  // mandatory remainder (notes, review_queue, at/room) pushes the whole response over it:
+  // the call must fail, not succeed with an over-budget brief (dots P2).
+  assertStandingFits(om, standingChars(om), 'max_chars');
+  assert.throws(
+    () => fitBrief(briefDraft({ ownerMemory: om, maxChars: standingChars(om) })),
+    (err: unknown) => err instanceof Fault && err.code === 'INVALID_INPUT' && /mandatory content/.test(err.message),
+  );
+  // The bare mandatory skeleton is also never returned over budget.
+  assert.throws(() => fitBrief(briefDraft({ maxChars: 200 })), /mandatory content/);
+});
+
+test('fitBrief drops tail lists to fit but keeps the standing block byte-identical', () => {
+  const om = buildOwnerMemory(FIXTURE, { kind: 'handoff', text: 'merge gate' });
+  assert.ok(om);
+  const decisions = Array.from({ length: 6 }, (_, i) => ({
+    id: `dec-${i}`, title: 'T'.repeat(150), valid_from: '2026-10-01T00:00:00.000Z', valid_until: null,
+    source_message_id: `m-${i}`, source_version: 1, source_version_basis: 'pinned' as const,
+  }));
+  const wide = fitBrief(briefDraft({ ownerMemory: om, decisions: [...decisions], maxChars: 8000 }));
+  assert.equal(wide.truncated, false);
+  assert.deepEqual(wide.owner_memory, om);
+  const tight = fitBrief(briefDraft({ ownerMemory: om, decisions: [...decisions], maxChars: standingChars(om) + 1000 }));
+  assert.equal(tight.truncated, true);
+  assert.ok(JSON.stringify(tight).length <= standingChars(om) + 1000);
+  assert.ok(tight.decisions.length < decisions.length);
+  assert.equal(JSON.stringify(tight.owner_memory), JSON.stringify(om));
 });
 
 function entry(over: Partial<PackEntry> = {}): PackEntry {

@@ -173,7 +173,7 @@ function decisionOf(item: MemoryItem): BriefDecision {
   };
 }
 
-interface Draft {
+export interface BriefDraft {
   at: string;
   room: string;
   decisions: BriefDecision[];
@@ -187,7 +187,7 @@ interface Draft {
   extraNotes: string[];
 }
 
-function shape(draft: Draft, truncated: boolean, notes: string[]): RoomBrief {
+function shape(draft: BriefDraft, truncated: boolean, notes: string[]): RoomBrief {
   return {
     ...(draft.ownerMemory ? { owner_memory: draft.ownerMemory } : {}),
     at: draft.at,
@@ -207,8 +207,17 @@ function shape(draft: Draft, truncated: boolean, notes: string[]): RoomBrief {
  * Tail-drop, same idea as the context pack. Lists are highest priority at the head.
  * Lowest priority list first: recent_kept_experience, open_tasks, skills, decisions.
  * A higher list loses its last entry only after every lower list is empty.
+ * Exported as the pure seam for tests (same pattern as buildOwnerMemory): roomBrief
+ * itself reads the standing block through the owner-decisions boundary stub, so the
+ * mandatory-content budget behavior is proven here with fixture drafts.
+ *
+ * The budget applies to the whole serialized brief. Only the four lists are drop
+ * candidates; the mandatory remainder (owner_memory when present, review_queue,
+ * notes, at/room, decisions_omitted) is never dropped or clipped. If that remainder
+ * alone exceeds maxChars the call fails with INVALID_INPUT instead of returning a
+ * brief that is silently over budget.
  */
-function fit(draft: Draft): RoomBrief {
+export function fitBrief(draft: BriefDraft): RoomBrief {
   const notes = [VIEW_NOTE, AT_NOTE, ...draft.extraNotes];
   let truncated = false;
   const tails: { id: string }[][] = [draft.recent_kept_experience, draft.open_tasks, draft.skills, draft.decisions];
@@ -223,7 +232,10 @@ function fit(draft: Draft): RoomBrief {
     if (!truncated) { truncated = true; notes.push(DROP_NOTE); size = JSON.stringify(build()).length; }
   }
   const brief = build();
-  if (JSON.stringify(brief).length > draft.maxChars) return { ...brief, truncated: true };
+  const finalSize = JSON.stringify(brief).length;
+  if (finalSize > draft.maxChars) {
+    throw new Fault('INVALID_INPUT', `Brief mandatory content renders to ${finalSize} chars, over the max_chars budget of ${draft.maxChars}. Mandatory fields (owner_memory, review_queue, notes) are never dropped or truncated; raise max_chars.`);
+  }
   return brief;
 }
 
@@ -261,13 +273,15 @@ export async function roomBrief(db: Database, room: string, opts: RoomBriefOptio
   ]);
   // U7/G4: the standing block counts toward maxChars like everything else and is never a
   // drop candidate; a block that alone exceeds maxChars fails instead of inflating the cap.
+  // fitBrief applies the same rule to the whole brief: if the mandatory remainder still
+  // exceeds maxChars after every droppable list is empty, the call fails there too.
   assertStandingFits(om, maxChars, 'max_chars');
   const skills: BriefSkill[] = [];
   const ranked = [...skillRows].sort(bySkill);
   for (const item of ranked.slice(0, SKILL_LIMIT)) {
     skills.push({ id: item.id, title: item.title, tier: Number(item.tier), grade: (await skillGrade(db, item.id)).letter });
   }
-  return fit({
+  return fitBrief({
     at: atTime,
     room: roomId,
     decisions: [...decisionRows].sort(byNewest).map(decisionOf),
