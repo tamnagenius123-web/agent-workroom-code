@@ -7,7 +7,7 @@ import { applyOutcome, decide, type DecisionLedger } from '../decision/decide.ts
 import { DECISIONS_URL } from '../decision/jev-client.ts';
 import { CHAT_URL, GENERATION_URL, type FetchLike } from '../decision/llm-fallback.ts';
 import { createTolerantJudgmentStore, missingJudgmentsTable } from '../decision/store.ts';
-import { DEFAULT_BUDGET_CAP_USD_MICROS, openD1Ledger } from './dispatch-wire.ts';
+import { budgetCapUsdMicros, openD1Ledger } from './dispatch-wire.ts';
 import type { Database, Env } from './db.ts';
 
 export interface ShadowEnv extends Env {
@@ -41,26 +41,21 @@ export function openRouterFetch(base: FetchLike): FetchLike {
 }
 
 function capOf(env: ShadowEnv): number {
-  const raw = env.BUDGET_CAP_USD_MICROS;
-  const value = typeof raw === 'number' ? raw : Number(raw);
-  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_BUDGET_CAP_USD_MICROS;
+  return budgetCapUsdMicros(env);
 }
 
 function decisionLedger(db: Database, cap: number): DecisionLedger {
   const inner = openD1Ledger(db, 'shadow:decision', cap);
   return {
+    assertReservation: binding => inner.assertReservation(binding),
     async reserve(input) {
-      const result = await inner.reserve(input as never);
+      const result = await inner.reserve(input);
       if (result.ok) return result;
       return { ok: false, reason: 'over_budget', remaining: result.remaining };
     },
     markPending: (id, reason, extra) => inner.markPending(id, reason, extra),
-    settle: (id, actual) => inner.settle(id, actual as never),
-    async closeNoCharge(id, evidence) {
-      await db.prepare(`UPDATE budget_reservations SET state='closed_no_charge', evidence=?
-        WHERE reservation_id=? AND state IN ('open','pending_actual','unknown')`).bind(evidence, id).all();
-      return 'closed_no_charge' as const;
-    },
+    settle: (id, actual) => inner.settle(id, actual),
+    closeNoCharge: (id, evidence) => inner.closeNoCharge(id, evidence),
   };
 }
 

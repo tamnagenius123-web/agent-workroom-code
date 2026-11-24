@@ -1,13 +1,15 @@
-// Port of agent-workroom-gate-mcp src/or-harness/client.ts @ 81370fb8fe0d080af3946fbf15fe953ee93b5893.
-// This is the one dispatch provider the product worker bundles. The roster is the
-// bundled JSON import. An unset API key throws before reserve and before fetch.
-// The decision-layer chatOnce helper is separate and is not this provider.
-import { createHash } from 'node:crypto';
+// The product worker's OpenRouter transport and money vocabulary. Every production
+// chat caller either reserves here or supplies a ledger-verified existing hold.
+// Provider POSTs are never retried automatically after an uncertain outcome.
+import { createHash } from '../server/node-crypto-shim.ts';
 import rosterJson from '../../config/models.openrouter.json' with { type: 'json' };
 
 export const BUNDLED_ROSTER_PATH = 'config/models.openrouter.json';
-const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
+export const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+export const OPENROUTER_GENERATION_URL = 'https://openrouter.ai/api/v1/generation';
+export type ReservationState = 'open' | 'pending_actual' | 'unknown' | 'settled' | 'closed_no_charge';
+export type CostField = 'total_cost' | 'usage';
+export const COUNTED_HOLD_STATES: readonly ReservationState[] = Object.freeze(['open', 'pending_actual', 'unknown']);
 
 export const DEFAULT_CHAT_TIMEOUT_MS = 60_000;
 export const DEFAULT_COST_RETRIES = 10;
@@ -58,7 +60,8 @@ export interface ReserveInput {
   pricing_snapshot: PricingSnapshot;
 }
 
-export type ReserveResult = { ok: true; reservation_id: string } | { ok: false; reason: string; remaining: number };
+export type ReserveResult = { ok: true; reservation_id: string; created: boolean; state: ReservationState }
+  | { ok: false; reason: string; remaining: number };
 
 export interface GenerationTokens {
   prompt: number | null;
@@ -73,7 +76,7 @@ export interface GenerationTokens {
 export interface SettleInput {
   generation_id: string;
   micro_usd: number;
-  cost_field: 'total_cost' | 'usage';
+  cost_field: CostField;
   provider_account: string | null;
   model: string;
   tokens: GenerationTokens;
@@ -92,6 +95,19 @@ export interface Ledger {
   summary(project: string): unknown | Promise<unknown>;
 }
 
+/** A hold's immutable execution identity. The ledger derives principal from its host. */
+export interface ReservationBinding {
+  reservation_id: string;
+  project: string;
+  run_id: string;
+  attempt_id: string;
+  model: string;
+}
+
+export interface ReservedChatLedger {
+  assertReservation(binding: ReservationBinding & { prompt_chars: number; max_tokens: number }): void | Promise<void>;
+}
+
 export interface ChatUsage {
   prompt_tokens: number | null;
   completion_tokens: number | null;
@@ -102,7 +118,7 @@ export interface ChatUsage {
 
 export interface GenerationCost {
   micro_usd: number;
-  cost_field: 'total_cost' | 'usage';
+  cost_field: CostField;
   provider_name: string | null;
   model: string | null;
   tokens: GenerationTokens;
@@ -111,7 +127,7 @@ export interface GenerationCost {
 export interface DispatchReport {
   model: string;
   generation_id: string | null;
-  state: 'settled' | 'pending_actual' | 'denied' | 'dry_run';
+  state: 'settled' | 'pending_actual' | 'denied' | 'dry_run' | 'replay';
   micro_usd: number | null;
   text: string;
   summary: unknown;
@@ -122,7 +138,7 @@ export interface DispatchReport {
   estimate_micro_usd: number;
   reserve_micro_usd: number;
   remaining: number | null;
-  cost_field: 'total_cost' | 'usage' | null;
+  cost_field: CostField | null;
   reservation_ok: boolean | null;
   usage: ChatUsage | null;
 }
@@ -179,15 +195,39 @@ function requireModel(model: string, roster = loadRoster()): RosterModel {
   return row;
 }
 
-function usdPerTokenToNano(price: string): bigint {
-  if (!/^\d+(\.\d+)?$/.test(price)) throw new Error('invalid token price');
-  const parts = price.split('.');
-  const whole = parts[0] ?? '0';
-  const frac = parts[1] ?? '';
-  return BigInt(whole) * 1_000_000_000n + BigInt((frac + '000000000').slice(0, 9));
+function decimal(value: string): { numerator: bigint; scale: number } {
+  const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(value);
+  if (!match || value.length > 128) throw new Error('invalid non-negative decimal');
+  const fraction = match[2] ?? '';
+  const exponent = Number(match[3] ?? 0);
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 400) throw new Error('decimal exponent out of range');
+  const scale = fraction.length - exponent;
+  const numerator = BigInt(match[1]! + fraction);
+  return scale >= 0 ? { numerator, scale } : { numerator: numerator * 10n ** BigInt(-scale), scale: 0 };
 }
 
-function promptTokenEstimate(promptChars: number): number {
+function safeMicro(value: bigint): number {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('micro amount overflow');
+  return Number(value);
+}
+
+/** Exact decimal conversion of a configured cap; fractions of a micro are rejected. */
+export function rosterCapMicros(defaults: Roster['project_defaults'], project: string): number {
+  const entry: unknown = defaults && Object.hasOwn(defaults, project) ? defaults[project] : undefined;
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) throw new Error(`Project ${project} is missing cap_usd`);
+  const capUsd: unknown = Reflect.get(entry, 'cap_usd');
+  if (typeof capUsd !== 'number') throw new Error(`Project ${project} cap_usd must be a number`);
+  if (!Number.isFinite(capUsd) || capUsd < 0) throw new Error(`Project ${project} cap_usd must be a non-negative finite number`);
+  const { numerator, scale } = decimal(String(capUsd));
+  const units = numerator * 1_000_000n;
+  const divisor = 10n ** BigInt(scale);
+  if (units % divisor !== 0n || units / divisor > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`Project ${project} cap_usd is not an exact micro-dollar amount`);
+  }
+  return Number(units / divisor);
+}
+
+export function promptTokenEstimate(promptChars: number): number {
   if (!Number.isSafeInteger(promptChars) || promptChars < 0) throw new Error('promptChars must be a non-negative integer');
   return Math.ceil(promptChars / 3) + 16;
 }
@@ -199,10 +239,12 @@ export function estimateMicroUsd(model: string, promptChars: number, maxTokens: 
   const completion = row.price_usd_per_token?.completion;
   if (typeof prompt !== 'string' || typeof completion !== 'string') throw new Error(`model missing per-token price: ${model}`);
   const promptTokens = promptTokenEstimate(promptChars);
-  const nano = BigInt(promptTokens) * usdPerTokenToNano(prompt) + BigInt(maxTokens) * usdPerTokenToNano(completion);
-  const micro = (nano + 999n) / 1_000n;
-  if (micro > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('estimate overflow');
-  return Number(micro);
+  const p = decimal(prompt), c = decimal(completion);
+  const scale = Math.max(p.scale, c.scale);
+  const units = (BigInt(promptTokens) * p.numerator * 10n ** BigInt(scale - p.scale)
+    + BigInt(maxTokens) * c.numerator * 10n ** BigInt(scale - c.scale)) * 1_000_000n;
+  const divisor = 10n ** BigInt(scale);
+  return safeMicro((units + divisor - 1n) / divisor);
 }
 
 export function reservationMicroUsd(estimate: number): number {
@@ -211,24 +253,26 @@ export function reservationMicroUsd(estimate: number): number {
   const times15 = (est * 3n + 1n) / 2n;
   const plusMin = est + BigInt(MIN_HEADROOM_MICRO);
   const hold = times15 > plusMin ? times15 : plusMin;
-  return Number(hold);
+  return safeMicro(hold);
 }
 
-export function defaultIds(model: string, project: string, prompt: string): { run_id: string; attempt_id: string } {
-  const hex = createHash('sha256').update(`${model}|${project}|${prompt}`).digest('hex').slice(0, 12);
+export function defaultIds(model: string, project: string, prompt: string, maxTokens?: number): { run_id: string; attempt_id: string } {
+  const hex = createHash('sha256').update(JSON.stringify(['workroom.dispatch.v2', model, project, prompt, maxTokens ?? null])).digest('hex');
   const run_id = `run-${hex}`;
   return { run_id, attempt_id: `${run_id}-a1` };
 }
 
 export function roundUsdToMicro(usd: number): number {
   if (!Number.isFinite(usd) || usd < 0) throw new OpenRouterError('bad_cost', { retryable: false });
-  const micro = Math.round(usd * 1_000_000);
-  if (!Number.isSafeInteger(micro)) throw new OpenRouterError('bad_cost', { retryable: false });
-  return micro;
+  try {
+    const { numerator, scale } = decimal(String(usd));
+    const divisor = 10n ** BigInt(scale);
+    return safeMicro((numerator * 2_000_000n + divisor) / (2n * divisor));
+  } catch { throw new OpenRouterError('bad_cost', { retryable: false }); }
 }
 
 function asNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function detailReasoning(record: Record<string, unknown>): number | null {
@@ -331,8 +375,9 @@ export async function chatOnce(input: {
     let response: Response;
     let body: unknown;
     try {
-      response = await input.fetchImpl(CHAT_URL, {
+      response = await input.fetchImpl(OPENROUTER_CHAT_URL, {
         method: 'POST',
+        redirect: 'manual',
         headers: authHeaders(key, true),
         body: JSON.stringify({
           model: input.model,
@@ -365,6 +410,24 @@ export async function chatOnce(input: {
   }
 }
 
+/**
+ * Reuses a hold created by the run supervisor or decision layer. The ledger
+ * checks its immutable identity before the one POST. The caller owns the
+ * durable execution fence; a successful hold check alone is not a lease.
+ */
+export async function sendReservedChat(input: Parameters<typeof chatOnce>[0] & {
+  ledger: ReservedChatLedger;
+  reservation: ReservationBinding;
+}): ReturnType<typeof chatOnce> {
+  if (input.model !== input.reservation.model) throw new OpenRouterError('reservation_model_mismatch', { retryable: false });
+  if (!usableKey(input.apiKey)) throw new OpenRouterError('missing_api_key', { retryable: false });
+  if (typeof input.prompt !== 'string' || !Number.isSafeInteger(input.maxTokens) || input.maxTokens < 1) {
+    throw new OpenRouterError('reservation_request_invalid', { retryable: false });
+  }
+  await input.ledger.assertReservation({ ...input.reservation, prompt_chars: input.prompt.length, max_tokens: input.maxTokens });
+  return chatOnce(input);
+}
+
 function generationRecord(body: unknown): Record<string, unknown> | null {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const outer = body as Record<string, unknown>;
@@ -389,7 +452,7 @@ function tokensOf(record: Record<string, unknown>): GenerationTokens {
   const out: GenerationTokens = {
     prompt,
     completion,
-    total: prompt !== null && completion !== null ? prompt + completion : null,
+    total: prompt !== null && completion !== null && Number.isSafeInteger(prompt + completion) ? prompt + completion : null,
   };
   if (reasoning !== null) {
     out.reasoning = reasoning;
@@ -402,6 +465,21 @@ function tokensOf(record: Record<string, unknown>): GenerationTokens {
   if (nativePrompt !== null) out.native_prompt = nativePrompt;
   if (nativeCompletion !== null) out.native_completion = nativeCompletion;
   return out;
+}
+
+/** Parse stored/provider usage without coercing unknown or invalid counts to zero. */
+export function normalizeGenerationTokens(value: unknown): GenerationTokens {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid tokens');
+  const result: GenerationTokens = { prompt: null, completion: null, total: null };
+  const allowed = ['prompt', 'completion', 'total', 'reasoning', 'content', 'native_prompt', 'native_completion'] as const;
+  for (const key of Object.keys(value)) if (!allowed.includes(key as typeof allowed[number])) throw new Error('unknown token field');
+  for (const field of allowed) {
+    if (!Object.hasOwn(value, field)) continue;
+    const count: unknown = Reflect.get(value, field);
+    if (count !== null && (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)) throw new Error('invalid token count');
+    result[field] = count as number | null;
+  }
+  return result;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -427,10 +505,11 @@ export async function getGenerationCost(id: string, options: {
   const backoffFactor = options.backoffFactor ?? 1;
   const maxDelayMs = options.maxDelayMs;
   if (!Number.isInteger(attempts) || attempts < 1) throw new OpenRouterError('bad_retries', { retryable: false });
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new OpenRouterError('bad_timeout', { retryable: false });
   if (!Number.isFinite(delayMs) || delayMs < 0) throw new OpenRouterError('bad_delay', { retryable: false });
   if (!Number.isFinite(backoffFactor) || backoffFactor < 1) throw new OpenRouterError('bad_backoff', { retryable: false });
   if (maxDelayMs !== undefined && (!Number.isFinite(maxDelayMs) || maxDelayMs < 0)) throw new OpenRouterError('bad_delay', { retryable: false });
-  const url = `${GENERATION_URL}?id=${encodeURIComponent(id)}`;
+  const url = `${OPENROUTER_GENERATION_URL}?id=${encodeURIComponent(id)}`;
   let sawMissing = false;
   let lastError: OpenRouterError | null = null;
   let waitMs = delayMs;
@@ -444,20 +523,21 @@ export async function getGenerationCost(id: string, options: {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       let response: Response;
+      let body: unknown;
       try {
-        response = await options.fetchImpl(url, { method: 'GET', headers: authHeaders(key, false), signal: controller.signal });
+        response = await options.fetchImpl(url, { method: 'GET', redirect: 'manual', headers: authHeaders(key, false), signal: controller.signal });
+        body = await readJson(response);
       } catch (error) {
         lastError = isAbort(error) ? new OpenRouterError('timeout', { retryable: true }) : new OpenRouterError('transport', { retryable: true });
         if (attempt < attempts) { await pause(); continue; }
         break;
       }
-      const body = await readJson(response);
       if (response.status === 404 || response.status === 204) {
         sawMissing = true;
         if (attempt < attempts) { await pause(); continue; }
         break;
       }
-      if (response.status >= 400 && response.status < 500) {
+      if (response.status >= 300 && response.status < 500) {
         throw new OpenRouterError(`http_${response.status}`, { status: response.status, retryable: false });
       }
       if (!response.ok) {
@@ -466,6 +546,7 @@ export async function getGenerationCost(id: string, options: {
         break;
       }
       const record = generationRecord(body);
+      if (record && record.id !== undefined && record.id !== id) throw new OpenRouterError('generation_mismatch', { retryable: false });
       const total = record ? presentUsd(record.total_cost) : undefined;
       const usage = record ? presentUsd(record.usage) : undefined;
       if (total === undefined && usage === undefined) {
@@ -531,7 +612,8 @@ async function settleOrPending(input: {
     remaining: null as number | null,
     reservation_ok: true as boolean | null,
   };
-  const pendingMark: PendingMark = { generation_id: input.generation_id, model: input.model };
+  const pendingMark: PendingMark = { generation_id: input.generation_id };
+  await input.ledger.markPending(input.reservation_id, 'generation_received', pendingMark);
   let cost: GenerationCost | null;
   try {
     cost = await getGenerationCost(input.generation_id, {
@@ -583,7 +665,7 @@ export interface SettlePendingResult {
   project: string;
   state: 'settled' | 'pending_actual' | 'unknown';
   micro_usd: number | null;
-  cost_field: 'total_cost' | 'usage' | null;
+  cost_field: CostField | null;
   reason: string | null;
 }
 
@@ -604,7 +686,7 @@ function generationOnlyFetch(fetchImpl: FetchLike): FetchLike {
   return async (url, init) => {
     const method = (init?.method ?? 'GET').toUpperCase();
     const target = String(url);
-    if (method !== 'GET' || !target.startsWith(GENERATION_URL)) {
+    if (method !== 'GET' || !target.startsWith(`${OPENROUTER_GENERATION_URL}?id=`)) {
       throw new OpenRouterError('settle_pending_chat_forbidden', { retryable: false });
     }
     return fetchImpl(url, init);
@@ -656,14 +738,19 @@ export async function settlePending(input: {
       results.push(pendingResult(hold, 'cost_unknown'));
       continue;
     }
-    await input.ledger.settle(hold.reservation_id, {
-      generation_id: hold.generation_id,
-      micro_usd: cost.micro_usd,
-      cost_field: cost.cost_field,
-      provider_account: cost.provider_name ?? hold.provider_account,
-      model: cost.model ?? hold.model,
-      tokens: cost.tokens,
-    });
+    try {
+      await input.ledger.settle(hold.reservation_id, {
+        generation_id: hold.generation_id,
+        micro_usd: cost.micro_usd,
+        cost_field: cost.cost_field,
+        provider_account: cost.provider_name ?? hold.provider_account,
+        model: cost.model ?? hold.model,
+        tokens: cost.tokens,
+      });
+    } catch {
+      results.push(pendingResult(hold, 'settlement_conflict'));
+      continue;
+    }
     results.push({
       reservation_id: hold.reservation_id,
       generation_id: hold.generation_id,
@@ -699,7 +786,7 @@ export async function dispatch(input: {
   const estimate_micro_usd = estimateMicroUsd(input.model, input.prompt.length, input.maxTokens, roster);
   const reserve_micro_usd = reservationMicroUsd(estimate_micro_usd);
   const generated = input.run_id === undefined || input.attempt_id === undefined
-    ? defaultIds(input.model, input.project, input.prompt)
+    ? defaultIds(input.model, input.project, input.prompt, input.maxTokens)
     : undefined;
   const run_id = input.run_id ?? generated?.run_id ?? '';
   const attempt_id = input.attempt_id ?? `${run_id}-a1`;
@@ -739,6 +826,17 @@ export async function dispatch(input: {
     };
   }
   if (!reserved.reservation_id) throw new OpenRouterError('reserve_missing_id', { retryable: false });
+  // The atomic reservation write decides who may issue the first POST. A held,
+  // completed or uncertain prior attempt is reconciled, never blindly resent.
+  if (reserved.created !== true) {
+    return {
+      model: input.model, generation_id: null, state: 'replay', micro_usd: null, text: '',
+      summary: await input.ledger.summary(input.project), reason: `reservation_${reserved.state}`,
+      run_id, attempt_id, reservation_id: reserved.reservation_id, estimate_micro_usd, reserve_micro_usd,
+      remaining: null, cost_field: null, reservation_ok: true, usage: null,
+    };
+  }
+  if (reserved.state !== 'open') throw new OpenRouterError('reserve_invalid_state', { retryable: false });
 
   const key = usableKey(input.apiKey);
   if (!key) throw new OpenRouterError('missing_api_key', { retryable: false });

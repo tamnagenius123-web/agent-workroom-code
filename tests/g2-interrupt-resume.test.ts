@@ -24,7 +24,7 @@ async function seedBase(db: Database) {
 async function seedTask(db: Database, taskId: string, epoch = 3, holder = PRINCIPAL, expiresInMs = 60_000) {
   const now = Date.now();
   await db.prepare(`INSERT INTO tasks(id,room_id,creator_id,owner_id,spec_json,state,version,current_submission_id,cancel_reason,created_at_ms,updated_at_ms)
-    VALUES (?,?,?,NULL,?,'in_progress',2,NULL,NULL,?,?)`).bind(taskId, 'room_main', holder, JSON.stringify({ goal: 'g2 job' }), now, now).all();
+    VALUES (?,?,?,NULL,?,'in_progress',2,NULL,NULL,?,?)`).bind(taskId, 'room_main', holder, JSON.stringify({ goal: 'g2 job', owner: null, dependencies: [], input_versions: [], done_conditions: ['Produce the requested result'] }), now, now).all();
   await db.prepare('INSERT INTO task_leases(task_id,holder_id,lease_epoch,expires_at_ms) VALUES (?,?,?,?)')
     .bind(taskId, holder, epoch, now + expiresInMs).all();
   await db.prepare('INSERT INTO execution_cancels(task_id,generation) VALUES (?,0)').bind(taskId).all();
@@ -97,7 +97,7 @@ function baseInput(task_id: string, run_id: string, attempt_id: string, fetch: R
 }
 
 test('G2 crash recovery across claim, reserve, model, and artifact resumes without double billing and persists reasoning split', async () => {
-  const app = await harness({ through: 82, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await seedBase(db);
@@ -195,7 +195,7 @@ test('G2 crash recovery across claim, reserve, model, and artifact resumes witho
 });
 
 test('G2 interrupt bumps cancel_generation and blocks pre-send, mid-flight, and resumed artifact commits', async () => {
-  const app = await harness({ through: 82, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await seedBase(db);
@@ -267,7 +267,7 @@ test('G2 interrupt bumps cancel_generation and blocks pre-send, mid-flight, and 
 });
 
 test('G2 fences reject stale epoch, expired lease, intent change, wrong principal, and mid-run expiry', async () => {
-  const app = await harness({ through: 82, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await seedBase(db);
@@ -339,7 +339,7 @@ test('G2 fences reject stale epoch, expired lease, intent change, wrong principa
 });
 
 test('G2 fails closed on ambiguity, refuses blind redispatch from UNKNOWN, and reconciles late cost', async () => {
-  const app = await harness({ through: 82, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await seedBase(db);
@@ -399,7 +399,7 @@ test('G2 fails closed on ambiguity, refuses blind redispatch from UNKNOWN, and r
     assert.equal(dupNonResume.failure, 'run_id_conflict');
     assert.equal(dupNonResume.fetches, 0);
 
-    // 5. Late cost via settleAgain updates execution_runs + execution_receipts from unknown/UNKNOWN to settled/PASS
+    // 5. Late cost appends a new receipt; the original UNKNOWN evidence remains immutable
     await seedTask(db, 't_late1', 3);
     const mLate1 = makeMockFetch({ genId: 'gen-late1', costStatus: 404 });
     const unk1 = await superviseRun(db, baseInput('t_late1', 'run-late1', 'run-late1-a1', mLate1.fetch));
@@ -420,8 +420,11 @@ test('G2 fails closed on ambiguity, refuses blind redispatch from UNKNOWN, and r
     const rcptRow1 = await db.prepare('SELECT disposition, detail FROM execution_receipts WHERE receipt_id=?').bind(unk1.receipt_id).first<{ disposition: string; detail: string }>();
     assert.equal(runRow1?.state, 'settled');
     assert.equal(runRow1?.failure, null);
-    assert.equal(rcptRow1?.disposition, 'PASS');
-    assert.equal(rcptRow1?.detail, 'late_cost_settled');
+    assert.equal(rcptRow1?.disposition, 'UNKNOWN');
+    assert.equal(rcptRow1?.detail, 'cost_unknown');
+    const latestReceipt = await db.prepare('SELECT c.disposition,c.detail FROM execution_receipts c JOIN execution_runs r ON r.receipt_id=c.receipt_id WHERE r.run_id=?').bind('run-late1').first<{ disposition: string; detail: string }>();
+    assert.equal(latestReceipt?.disposition, 'PASS');
+    assert.equal(latestReceipt?.detail, 'execution_check:late_cost_settled');
 
     // 6. Late cost via resumeRun on cost_unknown makes 0 POSTs and 1 GET and transitions to settled/PASS
     await seedTask(db, 't_late2', 3);
@@ -453,7 +456,9 @@ test('G2 fails closed on ambiguity, refuses blind redispatch from UNKNOWN, and r
     assert.deepEqual(lostSettled, { updated_run: true, state: 'unknown', disposition: 'UNKNOWN' });
     const lostRcpt = await db.prepare('SELECT disposition, detail FROM execution_receipts WHERE receipt_id=?').bind(lost.receipt_id).first<{ disposition: string; detail: string }>();
     assert.equal(lostRcpt?.disposition, 'UNKNOWN');
-    assert.equal(lostRcpt?.detail, 'reconciled_no_artifact');
+    assert.equal(lostRcpt?.detail, 'lost_response');
+    const reconciledReceipt = await db.prepare('SELECT c.detail FROM execution_receipts c JOIN execution_runs r ON r.receipt_id=c.receipt_id WHERE r.run_id=?').bind('run-lost').first<{ detail: string }>();
+    assert.equal(reconciledReceipt?.detail, 'reconciled_no_artifact');
   } finally { await app.close(); }
 });
 
@@ -485,7 +490,7 @@ test('G2 HTTP routes (/interrupt, /heartbeat, /resume, GET /:run_id) enforce aut
     }
     return new Response('unexpected', { status: 599 });
   };
-  const app = await harness({ through: 82, seed: true, bindings: { OPENROUTER_API_KEY: KEY }, outboundService });
+  const app = await harness({ through: 84, seed: true, bindings: { OPENROUTER_API_KEY: KEY }, outboundService });
   try {
     await seedBase(app.db);
     await seedTask(app.db, 't_http', 3);

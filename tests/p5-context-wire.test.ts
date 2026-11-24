@@ -27,12 +27,17 @@ interface ManifestEntry {
   mandatory: boolean;
   correction: boolean;
   coverage: string;
+  token_cost: null;
+  declared_cost_units: number;
 }
 interface CompileData {
   budget: number;
-  token_count: number;
+  used_units: number;
+  count_unit: 'utf16_code_units';
+  token_count: null;
+  token_status: 'unknown';
   rendered: string;
-  token_counter: string;
+  token_counter: null;
   manifest: ManifestEntry[];
 }
 
@@ -99,9 +104,12 @@ test('MCP context compile returns a manifest with source, version, scope, and ac
   });
   const selected = renderContext([evidence, pointer]);
   const compiled = ok(await call(app, READER, TOOL, { budget: selected.length, items: [evidence, pointer] }));
-  assert.equal(compiled.data?.token_counter, 'utf16_code_units');
+  assert.equal(compiled.data?.token_counter, null);
+  assert.equal(compiled.data?.count_unit, 'utf16_code_units');
+  assert.equal(compiled.data?.token_status, 'unknown');
   assert.equal(compiled.data?.rendered, selected);
-  assert.equal(compiled.data?.token_count, selected.length);
+  assert.equal(compiled.data?.token_count, null);
+  assert.equal(compiled.data?.used_units, selected.length);
   assert.equal(compiled.data?.budget, selected.length);
   const emitted = entry(compiled.data, 'ev-1');
   assert.equal(emitted.source, 'msg-2');
@@ -113,6 +121,8 @@ test('MCP context compile returns a manifest with source, version, scope, and ac
   assert.equal(emitted.freshness, 'STALE');
   assert.equal(emitted.mandatory, true);
   assert.equal(emitted.selected, true);
+  assert.equal(emitted.token_cost, null);
+  assert.equal(emitted.declared_cost_units, evidence.token_cost);
   const pointed = entry(compiled.data, 'ptr-1');
   assert.equal(pointed.source, 'msg-p');
   assert.equal(pointed.version, 'rev_p');
@@ -141,7 +151,8 @@ test('MCP context compile returns a manifest with source, version, scope, and ac
 
   const empty = ok(await call(app, ALPHA, TOOL, { budget: 0, items: [] }));
   assert.deepEqual(empty.data?.manifest, []);
-  assert.equal(empty.data?.token_count, 0);
+  assert.equal(empty.data?.token_count, null);
+  assert.equal(empty.data?.used_units, 0);
   assert.equal(empty.data?.rendered, '');
 
   const lied = await call(app, ALPHA, TOOL, { budget: selected.length, items: [{ ...evidence, actually_emitted: true }] });
@@ -179,7 +190,8 @@ test('MCP context compile returns an error when a mandatory source exceeds the b
 
   const enough = renderContext(items).length;
   const fit = ok(await call(app, ALPHA, TOOL, { budget: enough, items }));
-  assert.equal(fit.data?.token_count, enough);
+  assert.equal(fit.data?.token_count, null);
+  assert.equal(fit.data?.used_units, enough);
   assert.deepEqual(fit.data?.manifest.map(row => [row.source, row.version, row.scope, row.actually_emitted]), [
     ['msg-c', 'rev_c', 'room_main', true],
     ['msg-e', 'rev_e', 'task-7', true],
@@ -187,4 +199,19 @@ test('MCP context compile returns an error when a mandatory source exceeds the b
   ]);
   assert.equal(fit.data?.rendered.includes('KEEP-WHOLE-CORRECTION'), true);
   assert.equal(fit.data?.rendered.includes('KEEP-WHOLE-EVIDENCE'), true);
+});
+
+test('Unicode wire accounting reports code units separately from unknown model tokens', async () => {
+  const evidence = item({ text: '안녕하세요 😀', token_cost: 999, mandatory: true });
+  const rendered = renderContext([evidence]);
+  const result = ok(await call(app, ALPHA, TOOL, { budget: rendered.length, items: [evidence] })).data;
+  assert.ok(result);
+  assert.equal(result.used_units, rendered.length);
+  assert.equal(result.count_unit, 'utf16_code_units');
+  assert.equal(result.token_count, null);
+  assert.equal(result.token_counter, null);
+  assert.equal(result.token_status, 'unknown');
+  assert.equal(result.manifest[0]?.declared_cost_units, 999);
+  assert.equal(result.manifest[0]?.token_cost, null);
+  assert.notEqual(result.used_units, 999);
 });

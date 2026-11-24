@@ -1,10 +1,10 @@
 import { searchMessages } from './memory.ts';
 import { proposeItem, proposePromotion, promotionChain, proposeSupersede, validView, type MemoryKind } from './memory-items.ts';
 import { reviewItem, reviewEdge, prepareReview, reviewsAwaiting, unknownItem, unknownEdge } from './memory-review.ts';
-import { contextPack } from './context-pack.ts';
+import { contextPack, fitContextData } from './context-pack.ts';
 import { roomBrief } from './room-brief.ts';
-import { assertStandingFits, ownerMemory } from './memory-hook.ts';
-import { pinTable } from './pin-table.ts';
+import { ownerMemory } from './memory-hook.ts';
+import { standingMemory } from './standing-memory.ts';
 import { proposeFold, reviewFold, reviewFoldEdge, foldView } from './fold.ts';
 import { foldedContextPack } from './fold-pack.ts';
 import { skillGrade, endorseSkill } from './skill-grade.ts';
@@ -106,17 +106,32 @@ export class Workroom {
   async reviewPrepare(i: { room: string; target: 'item' | 'edge'; id: string }) { await this.authorize(i.room); if (i.target === 'item') await this.sameRoomItem(i.room, i.id); else await this.sameRoomEdge(i.room, i.id); return { data: await prepareReview(this.db, i.target, i.id) }; }
   async memoryReview(i: { room: string; target: 'item' | 'edge'; id: string; verdict: 'approve' | 'reject'; reason: string; content_digest: string }) { await this.authorize(i.room, true); if (i.target === 'item') await this.sameRoomItem(i.room, i.id); else await this.sameRoomEdge(i.room, i.id); const f = i.target === 'item' ? reviewItem : reviewEdge; return { data: { [i.target]: await f(this.db, this.principal, i.id, i.verdict, i.reason, i.content_digest) } }; }
   async memoryView(i: { room: string; kinds?: MemoryKind[]; at?: string; include_pending: boolean }) { await this.authorize(i.room); return { data: { items: await validView(this.db, i.room, { kinds: i.kinds, at: i.at, includePending: i.include_pending }) } }; }
-  // U7/G4: the standing owner notices come first; the assembled block is never truncated
-  // to fit budget_chars — a block that alone exceeds it fails the call (assertStandingFits).
-  // Per-entry text is capped when the block is built (see memory-hook.ts). pin_table compares
-  // every entry's pinned source revision with the current one, for plain and folded packs.
-  async contextPack(i: { room: string; task: string; budget_chars: number; at?: string; folds?: boolean }) { await this.authorize(i.room); const om = await ownerMemory(this.db, { kind: 'handoff', text: i.task }); assertStandingFits(om, i.budget_chars, 'budget_chars'); const pack = i.folds ? await foldedContextPack(this.db, i.room, i.task, i.budget_chars, i.at) : await contextPack(this.db, i.room, i.task, i.budget_chars, i.at); const table = pinTable(pack.sections); return { data: om ? { owner_memory: om, ...pack, pin_table: table } : { ...pack, pin_table: table } }; }
+  // G4: approved opt-in standing notices are a stable prefix. The final fitter
+  // counts the complete data envelope, including owner notices and source pins.
+  async contextPack(i: { room: string; task: string; budget_chars: number; at?: string; folds?: boolean }) {
+    await this.authorize(i.room);
+    const at = i.at ?? new Date().toISOString();
+    const [om, standing, pack] = await Promise.all([
+      ownerMemory(this.db, { kind: 'handoff', text: i.task }),
+      standingMemory(this.db, i.room, at),
+      i.folds ? foldedContextPack(this.db, i.room, i.task, i.budget_chars, at)
+        : contextPack(this.db, i.room, i.task, i.budget_chars, at),
+    ]);
+    return { data: await fitContextData(this.db, i.room, pack, i.budget_chars, om, standing) };
+  }
   async foldPropose(i: { room: string; id?: string; summary: string; valid_from: string; message_ids?: string[]; child_fold_ids?: string[]; supersedes?: string }) { await this.authorize(i.room, true); return { data: await proposeFold(this.db, this.principal, { id: i.id, room_id: i.room, summary: i.summary, valid_from: i.valid_from, message_ids: i.message_ids, child_fold_ids: i.child_fold_ids, supersedes: i.supersedes }) }; }
   async foldReview(i: { room: string; target: 'fold' | 'edge'; id: string; verdict: 'approve' | 'reject'; reason: string; content_digest: string }) { await this.authorize(i.room, true); return { data: i.target === 'fold' ? { fold: await reviewFold(this.db, this.principal, i.room, i.id, i.verdict, i.reason, i.content_digest) } : { edge: await reviewFoldEdge(this.db, this.principal, i.room, i.id, i.verdict, i.reason, i.content_digest) } }; }
   async foldView(i: { room: string; at?: string; include_pending: boolean }) { await this.authorize(i.room); return { data: await foldView(this.db, i.room, { at: i.at, includePending: i.include_pending }) }; }
   async briefGet(i: { room: string; at?: string; max_chars?: number; task?: string; kind?: 'handoff' | 'question' | 'decision' }) { await this.authorize(i.room); return { data: await roomBrief(this.db, i.room, { at: i.at, maxChars: i.max_chars, task: i.task, kind: i.kind }) }; }
   // MEM-HOOK: question/decision points. Same block as the brief; null owner_memory when 0045 is absent.
-  async memoryRecall(i: { room: string; kind: 'handoff' | 'question' | 'decision'; text: string }) { await this.authorize(i.room); return { data: { owner_memory: await ownerMemory(this.db, { kind: i.kind, text: i.text }) } }; }
+  async memoryRecall(i: { room: string; kind: 'handoff' | 'question' | 'decision'; text: string }) {
+    await this.authorize(i.room);
+    const [standing, owner] = await Promise.all([
+      standingMemory(this.db, i.room, new Date().toISOString()),
+      ownerMemory(this.db, { kind: i.kind, text: i.text }),
+    ]);
+    return { data: { ...(standing ? { standing_memory: standing } : {}), owner_memory: owner } };
+  }
   async skillGrade(i: { room: string; id: string }) { await this.authorize(i.room); await this.sameRoomItem(i.room, i.id); return { data: await skillGrade(this.db, i.id) }; }
   async skillEndorse(i: { room: string; id: string; reason: string; content_digest: string }) { await this.authorize(i.room, true); await this.sameRoomItem(i.room, i.id); return { data: await endorseSkill(this.db, this.principal, i.id, i.reason, i.content_digest) }; }
   async experiencePropose(i: { room: string; component: string; change: string; prediction: string; source_message_id: string }) { await this.authorize(i.room, true); return { data: { entry: await proposeExperience(this.db, this.principal, { room_id: i.room, component: i.component, change: i.change, prediction: i.prediction, source_message_id: i.source_message_id }) } }; }
@@ -137,8 +152,11 @@ export class Workroom {
     const reviews = await reviewsAwaiting(this.db, this.principal, input.room);
     const handoffs = await handoffsAddressedTo(this.db, this.principal, input.room);
     // MEM-HOOK: queue pickup is a handoff point; recall is keyed on the queued work's text.
-    const om = await ownerMemory(this.db, { kind: 'handoff', text: JSON.stringify(tasks).slice(0, 2000) });
-    return { data: { ...(om ? { owner_memory: om } : {}), tasks, reviews, handoffs }, meta: {} };
+    const [om, standing] = await Promise.all([
+      ownerMemory(this.db, { kind: 'handoff', text: JSON.stringify(tasks).slice(0, 2000) }),
+      standingMemory(this.db, input.room, new Date().toISOString()),
+    ]);
+    return { data: { ...(standing ? { standing_memory: standing } : {}), ...(om ? { owner_memory: om } : {}), tasks, reviews, handoffs }, meta: {} };
   }
   async mentions(input: { room: string; limit: number }) {
     await this.authorize(input.room);

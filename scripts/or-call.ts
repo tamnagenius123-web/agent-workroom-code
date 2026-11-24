@@ -108,6 +108,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(printReport(report) + '\n');
     if (report.state === 'denied') process.exitCode = 2;
     else if (report.state === 'pending_actual') process.exitCode = 3;
+    else if (report.state === 'replay') process.exitCode = 4;
     return;
   }
   const report = await dispatch({

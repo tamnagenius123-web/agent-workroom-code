@@ -7,7 +7,8 @@
     "node": ">=24.19.0"
   },
   "bin": {
-    "workroom": "dist/workroom.mjs"
+    "workroom": "dist/workroom.mjs",
+    "workroom-orchestrator": "dist/workroom-orchestrator.mjs"
   },
   "scripts": {
     "typecheck": "tsc -b",
@@ -22,6 +23,7 @@
     "test:all": "node scripts/test-select.mjs --all",
     "test:select": "node scripts/test-select.mjs --list",
     "call": "tsx scripts/or-call.ts",
+    "orch": "tsx scripts/orch/run.mts",
     "test:or-harness": "tsx --test tests/or-harness-*.test.ts"
   },
   "dependencies": {

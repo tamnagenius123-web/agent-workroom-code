@@ -31,7 +31,7 @@ function mockFetch(mode: 'ok' | 'lost'): (input: string | URL | Request, init?: 
 async function seed(db: Database, taskId: string, epoch: number) {
   const now = Date.now();
   await db.prepare(`INSERT INTO tasks(id,room_id,creator_id,owner_id,spec_json,state,version,current_submission_id,cancel_reason,created_at_ms,updated_at_ms)
-    VALUES (?,?,?,NULL,?,'in_progress',2,NULL,NULL,?,?)`).bind(taskId, 'room_main', PRINCIPAL, JSON.stringify({ goal: 'one job' }), now, now).all();
+    VALUES (?,?,?,NULL,?,'in_progress',2,NULL,NULL,?,?)`).bind(taskId, 'room_main', PRINCIPAL, JSON.stringify({ goal: 'one job', owner: null, dependencies: [], input_versions: [], done_conditions: ['Produce the requested result'] }), now, now).all();
   await db.prepare('INSERT INTO task_leases(task_id,holder_id,lease_epoch,expires_at_ms) VALUES (?,?,?,?)').bind(taskId, PRINCIPAL, epoch, now + 60_000).all();
   await db.prepare('INSERT INTO execution_cancels(task_id,generation) VALUES (?,0)').bind(taskId).all();
 }
@@ -57,7 +57,7 @@ test('the cost lookup waits between 30 and 60 seconds across retries', () => {
 });
 
 test('one mock attempt keeps the same ids, and the counterexamples stay visible', async () => {
-  const app = await harness({ through: 81, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await base(db);
@@ -151,7 +151,7 @@ test('one mock attempt keeps the same ids, and the counterexamples stay visible'
 });
 
 test('a late generation cost is retried, and a second superviseRun does not post again', async () => {
-  const app = await harness({ through: 81, seed: true });
+  const app = await harness({ through: 84, seed: true });
   try {
     const db = app.db;
     await base(db);
@@ -203,7 +203,7 @@ test('POST /execution-runs is authenticated, settles one mock job, and is not a 
     }
     return new Response('outbound blocked', { status: 599 });
   };
-  const app = await harness({ through: 81, seed: true, bindings: { OPENROUTER_API_KEY: KEY }, outboundService });
+  const app = await harness({ through: 84, seed: true, bindings: { OPENROUTER_API_KEY: KEY }, outboundService });
   try {
     await base(app.db);
     await seed(app.db, 'task_route', 3);

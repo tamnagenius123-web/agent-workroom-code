@@ -13,6 +13,7 @@ import { Fault } from '../src/server/contracts.ts';
 import type { Database, Env, Statement } from '../src/server/db.ts';
 import { createApp, type Authenticate } from '../src/server/app.ts';
 import { Workroom } from '../src/server/domain.ts';
+import { DB_NOW } from '../src/server/tasks.ts';
 import {
   GATE_VERSION, evaluateVerifierReceipt,
   type CaseRun, type ReceiptObservation,
@@ -848,7 +849,10 @@ describe('WR-GIT workspaces', { concurrency: false }, () => {
   });
 
   test('claimNext forks a workspace for the task it claims', async () => {
-    await boot.db.prepare("UPDATE tasks SET state='canceled', version=version+1 WHERE state='open'").all();
+    // This suite shares a database. Expired in-progress tasks are now ready
+    // candidates too, so isolate this fork case from earlier eligible fixtures.
+    await boot.db.prepare(`UPDATE tasks SET state='canceled', version=version+1 WHERE state='open'
+      OR (state='in_progress' AND EXISTS (SELECT 1 FROM task_leases l WHERE l.task_id=tasks.id AND l.expires_at_ms<=${DB_NOW}))`).all();
     const artifacts = new MemoryArtifacts();
     const env = envFor(artifacts, true);
     const task = await createTask(env);

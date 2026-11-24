@@ -8,14 +8,15 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
-  chatOnce,
+  sendReservedChat,
   estimateMicroUsd,
   getGenerationCost,
   OpenRouterError,
   reservationMicroUsd,
   roundUsdToMicro,
 } from './llm-fallback.ts';
-import type { ReserveInput, ReserveResult, SettleInput } from '../or-harness/ledger.ts';
+import type { ReserveResult, SettleInput, ReservedChatLedger } from '../or-harness/client.ts';
+import type { StoredReserveInput } from '../or-harness/ledger.ts';
 import {
   DECISION_LEDGER_PROJECT,
   JEV_RESERVE_MICRO_USD,
@@ -120,8 +121,8 @@ export function mapVerification(): 'reject' {
   return 'reject';
 }
 
-export interface DecisionLedger {
-  reserve(input: ReserveInput): Promise<ReserveResult> | ReserveResult;
+export interface DecisionLedger extends ReservedChatLedger {
+  reserve(input: StoredReserveInput): Promise<ReserveResult> | ReserveResult;
   markPending(reservation_id: string, reason: string, extra?: {
     generation_id?: string;
     provider_account?: string | null;
@@ -427,7 +428,9 @@ interface FinishCtx {
   }
   let chat: { generation_id: string; text: string };
   try {
-    chat = await chatOnce({
+    chat = await sendReservedChat({
+      ledger,
+      reservation: { reservation_id: held.id, project: ctx.project, run_id: `decision-${ctx.recordId}`, attempt_id: `${ctx.recordId}-llm`, model: LLM_FALLBACK_MODEL },
       model: LLM_FALLBACK_MODEL,
       prompt,
       maxTokens: LLM_MAX_TOKENS,
@@ -437,10 +440,13 @@ interface FinishCtx {
     });
   } catch (error) {
     const status = error instanceof OpenRouterError ? error.status : null;
-    if (status !== null && status >= 400 && status < 500) await ledger.closeNoCharge(held.id, `llm:http_${status}`);
+    const generationId = error instanceof OpenRouterError ? error.generation_id : null;
+    if (generationId) await ledger.markPending(held.id, 'llm_error', { generation_id: generationId });
+    else if (status !== null && status >= 400 && status < 500) await ledger.closeNoCharge(held.id, `llm:http_${status}`);
     else await ledger.markPending(held.id, 'llm_error');
-    return finish(ctx, { verdict: 'fallback_rule', path: 'rule', answer: null, probs: null, model: null, payload, genId: null, baseline: 'hold', shadow: null, remember: false });
+    return finish(ctx, { verdict: 'fallback_rule', path: 'rule', answer: null, probs: null, model: null, payload, genId: generationId, baseline: 'hold', shadow: null, remember: false });
   }
+  await ledger.markPending(held.id, 'generation_received', { generation_id: chat.generation_id });
   const parsed = parseLlm(chat.text, wire);
   const cost = await getGenerationCost(chat.generation_id, {
     fetchImpl,
@@ -461,7 +467,7 @@ interface FinishCtx {
     ctx.charged += cost.micro_usd;
     ctx.chargedAny = true;
   } else {
-    await ledger.markPending(held.id, 'cost_unknown', { generation_id: chat.generation_id, model: LLM_FALLBACK_MODEL });
+    await ledger.markPending(held.id, 'cost_unknown', { generation_id: chat.generation_id });
   }
   if (!parsed) {
     return finish(ctx, {
@@ -792,9 +798,9 @@ function llmPrompt(state: unknown, questions: Record<string, WireQuestion>): str
   ].join('\n');
 }
 
-async function reserve(ledger: DecisionLedger, body: ReserveInput): Promise<{ ok: true; id: string } | { ok: false }> {
+async function reserve(ledger: DecisionLedger, body: StoredReserveInput): Promise<{ ok: true; id: string } | { ok: false }> {
   const result = await ledger.reserve(body);
-  if (!result.ok) return { ok: false };
+  if (!result.ok || !result.created || result.state !== 'open') return { ok: false };
   return { ok: true, id: result.reservation_id };
 }
 

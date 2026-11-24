@@ -1,5 +1,6 @@
 import type { ContextSections, PackEntry } from './context-pack.ts';
 import type { FoldContextSections } from './fold-pack.ts';
+import type { StandingMemory } from './standing-memory.ts';
 
 // U7/G4 pin comparison table: every pack entry's pinned source revision set against the
 // current revision of that source, in pack order (decisions, skills, facts, folds, messages).
@@ -10,15 +11,15 @@ import type { FoldContextSections } from './fold-pack.ts';
 // version because the fold entry carries only the stale flag, not the newer revision
 // number (its raw message stays in the pack and has its own row under messages).
 
-export type PinStatus = 'current' | 'stale' | 'inferred';
+export type PinStatus = 'current' | 'stale' | 'inferred' | 'missing';
 
 export interface PinRow {
-  section: 'decisions' | 'skills' | 'facts' | 'folds' | 'messages';
+  section: 'standing' | 'decisions' | 'skills' | 'facts' | 'folds' | 'messages';
   /** PackEntry id, or the fold id for fold rows. */
   entry_id: string;
   source_message_id: string;
-  source_version: number;
-  /** Null only for a stale fold source, whose newer revision number the fold entry does not carry. */
+  source_version: number | null;
+  /** Null when the entry does not carry a current version; the emitted manifest resolves it. */
   source_current_version: number | null;
   basis: 'pinned' | 'inferred' | 'current';
   status: PinStatus;
@@ -40,8 +41,17 @@ function entryRow(section: PinRow['section'], entry: PackEntry): PinRow {
 }
 
 /** Pin rows for a context pack or a folded context pack, in section order, then entry order. */
-export function pinTable(sections: ContextSections | FoldContextSections): PinRow[] {
+export function pinTable(sections: ContextSections | FoldContextSections, standing?: StandingMemory | null): PinRow[] {
   const rows: PinRow[] = [
+    ...(standing?.notices.map(entry => ({
+      section: 'standing' as const,
+      entry_id: entry.id,
+      source_message_id: entry.source_message_id,
+      source_version: entry.source_version,
+      source_current_version: null,
+      basis: entry.source_version_basis,
+      status: entry.source_version_basis === 'inferred' ? 'inferred' as const : 'current' as const,
+    })) ?? []),
     ...sections.decisions.map(entry => entryRow('decisions', entry)),
     ...sections.skills.map(entry => entryRow('skills', entry)),
     ...sections.facts.map(entry => entryRow('facts', entry)),
