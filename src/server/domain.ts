@@ -15,6 +15,7 @@ import { AUTH } from './policy.ts';
 import { Conversation } from './conversation.ts';
 import { handoffsAddressedTo } from './receipts-wire.ts';
 import { Tasks, type WrgitClaim } from './tasks.ts';
+import type { McpEvents } from './mcp-events.ts';
 import { Webhooks, deliver, mentionsFor, planNotify, NO_WAKE_AUTH, type Defer, type WakeAuth } from './notify.ts';
 import { WakeProofs } from './wake.ts';
 import { run, sha256, type Plan, type Row } from './mutations.ts';
@@ -26,7 +27,7 @@ export class Workroom {
   readonly tasks:Tasks;
   readonly webhooks:Webhooks;
   readonly wake:WakeProofs;
-  constructor(private db: Database, readonly principal: string, private defer?: Defer, private wakeAuth: WakeAuth = NO_WAKE_AUTH, wrgit?: WrgitClaim) { this.webhooks=new Webhooks(db,principal,wakeAuth); this.wake=new WakeProofs(db,principal); this.g2=new Conversation(db,principal,(room,write)=>this.authorize(room,write)); this.tasks=new Tasks(db,principal,(room,write)=>this.authorize(room,write),wrgit); }
+  constructor(private db: Database, readonly principal: string, private defer?: Defer, private wakeAuth: WakeAuth = NO_WAKE_AUTH, wrgit?: WrgitClaim, private events?: McpEvents) { this.webhooks=new Webhooks(db,principal,wakeAuth); this.wake=new WakeProofs(db,principal); this.g2=new Conversation(db,principal,(room,write)=>this.authorize(room,write)); this.tasks=new Tasks(db,principal,(room,write)=>this.authorize(room,write),wrgit); }
 
   get database(): Database { return this.db; }
   async authorize(room = ROOM, write = false): Promise<void> {
@@ -174,6 +175,7 @@ export class Workroom {
         SELECT ?,?,?,'message.post',?,? FROM messages WHERE id=?`)
         .bind(crypto.randomUUID(), this.principal, ROOM, id, now, id),
       ...notify.statements,
+      ...(this.events ? [this.events.planMention(id)] : []),
       this.db.prepare(`SELECT request_hash,result_json FROM operations
         WHERE principal_id=? AND operation=? AND key=? AND EXISTS (${AUTH} AND m.can_post=1)`)
         .bind(...args, this.principal, ROOM),
@@ -195,6 +197,10 @@ export class Workroom {
       if (!replayed) {
         const r = notify;
         mentions = r.mentions;
+        if (this.events) {
+          const delivery = this.events.sweep(id).catch(() => undefined);
+          if (this.defer) this.defer(delivery); else await delivery;
+        }
         if (r.deliveries.length) { const p = deliver(this.db, r.deliveries, this.wakeAuth).catch(() => 0); if (this.defer) this.defer(p); else await p; }
       } else mentions = (await mentionsFor(this.db, [stored.message.id])).get(stored.message.id) ?? [];
       return { data: mentions.length ? { ...stored, message: { ...stored.message, mentions } } : stored, meta: { idempotency_key: input.idempotency_key, replayed } };
