@@ -55,7 +55,7 @@ A PR body missing any of these fails the `policy` check:
 - **Tier L** — auth/permissions/security, server authority files (`src/server/mcp.ts`, `policy`, `domain`, `worker`), spend/billing paths, secrets/egress, deploy config, the verification/CI rules themselves, data-altering migrations. Path rules force Tier L; declaring D on an L path fails policy.
   - Merge condition: green `ci` + green `policy` + a **non-author review via GitHub opencodereview**, with the verdict recorded on the PR.
   - Exception: in docs repo ①, green CI is a pass — for prose documents only. A policy or authority document in ① does not gain approval from green CI.
-- A GitHub APPROVED review is not a requirement. A room PASS is not a merge condition.
+- A formal review approval in the GitHub UI is not a merge requirement. A room PASS is not a merge condition.
 - Tier D/L is a **floor, not a verification spec**: it sets the minimum, never what must actually be proven. The unit contract names the evidence.
 - Once the gate passes, any agent may merge — if merging is inside the unit contract's permitted actions. Branch deletion is a separate cleanup act, not an automatic side effect of merging.
 - Unit states are distinct: **implemented → verified → merged → deployed → observed.** A unit terminates at the state its contract defines. A code unit headed for production is "done" only after **deploy + smoke pass**; leave a D1 bookmark before deploying.
