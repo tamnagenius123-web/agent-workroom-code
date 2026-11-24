@@ -40,6 +40,7 @@ export const MIGRATION_REGISTRY = {
   '0080': { unit: 'Gate telegram topics (0080_telegram_topics.sql, agent-workroom-gate-mcp; not in this worktree)', status: 'reserved' },
   '0081': { unit: 'G1 execution run envelope (0081_g1_execution_runs.sql)', status: 'used' },
   '0082': { unit: 'G2 execution checkpoints and interrupts (0082_g2_interrupt_resume.sql)', status: 'used' },
+  '0084': { unit: 'U8-G6 unit lease generation fence (0084_unit_lease_generation.sql)', status: 'used' },
 } as const;
 export type ReservedMigration = keyof typeof MIGRATION_REGISTRY;
 
