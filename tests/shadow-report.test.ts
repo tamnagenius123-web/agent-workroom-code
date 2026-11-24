@@ -165,6 +165,48 @@ test('duplicate actuals for one generation are summed once per judgment', () => 
   assert.equal(overall.token_unknown_fields, 0);
 });
 
+test('same gen_id under different providers is not mixed: it reports ambiguous, not matched', () => {
+  const rows = [row({ id: 'x1', gen_id: 'g1', cost_micro_usd: 30 })];
+  const actuals: GenerationActual[] = [
+    { generation_id: 'g1', provider: 'openrouter', provider_account: 'acct-a', prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, micro_usd: 10 },
+    { generation_id: 'g1', provider: 'other-provider', provider_account: 'acct-a', prompt_tokens: 20, completion_tokens: 7, total_tokens: 27, micro_usd: 20 },
+  ];
+  const overall = buildShadowReport(rows, actuals).overall;
+  // judgments has no provider column, so neither record can be attributed;
+  // the tokens must not be summed into the judgment's usage.
+  assert.equal(overall.usage_matched, 0);
+  assert.equal(overall.usage_ambiguous, 1);
+  assert.equal(overall.usage_coverage, 0);
+  assert.equal(overall.prompt_tokens, 0);
+  assert.equal(overall.completion_tokens, 0);
+  assert.equal(overall.total_tokens, 0);
+});
+
+test('same gen_id under different provider accounts is ambiguous too', () => {
+  const rows = [row({ id: 'x1', gen_id: 'g1' })];
+  const actuals: GenerationActual[] = [
+    { generation_id: 'g1', provider: 'openrouter', provider_account: 'acct-a', prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, micro_usd: 10 },
+    { generation_id: 'g1', provider: 'openrouter', provider_account: 'acct-b', prompt_tokens: 20, completion_tokens: 7, total_tokens: 27, micro_usd: 20 },
+  ];
+  const overall = buildShadowReport(rows, actuals).overall;
+  assert.equal(overall.usage_matched, 0);
+  assert.equal(overall.usage_ambiguous, 1);
+  assert.equal(overall.total_tokens, 0);
+});
+
+test('same gen_id under one provider account still sums duplicate actuals', () => {
+  const rows = [row({ id: 'x1', gen_id: 'g1' })];
+  const actuals: GenerationActual[] = [
+    { generation_id: 'g1', provider: 'openrouter', provider_account: 'acct-a', prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, micro_usd: 10 },
+    { generation_id: 'g1', provider: 'openrouter', provider_account: 'acct-a', prompt_tokens: 20, completion_tokens: null, total_tokens: 25, micro_usd: 20 },
+  ];
+  const overall = buildShadowReport(rows, actuals).overall;
+  assert.equal(overall.usage_matched, 1);
+  assert.equal(overall.usage_ambiguous, 0);
+  assert.equal(overall.prompt_tokens, 30);
+  assert.equal(overall.total_tokens, 40);
+});
+
 test('parseTokensJson accepts ledger token records and rejects other shapes', () => {
   assert.deepEqual(parseTokensJson('{"prompt":10,"completion":5,"total":15}'), {
     prompt_tokens: 10, completion_tokens: 5, total_tokens: 15,
@@ -225,6 +267,27 @@ test('loader reads judgments and settled actuals from D1', async () => {
     assert.equal(report.overall.prompt_tokens, 100);
     assert.equal(report.overall.total_tokens, 120);
     assert.equal(report.baseline.shadow_overhead_micro_usd, 120);
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test('loader keeps actuals from different provider accounts separate', async () => {
+  const { mf, db } = await database();
+  try {
+    await applyMigration(db, '0028_budget_ledger.sql');
+    await applyMigration(db, '0078_judgments.sql');
+    await insertJudgment(db, row({ id: 'jdg-a', gen_id: 'gen-x', cost_micro_usd: 30, created_at: '2026-11-23T01:00:00.000Z' }));
+    const insertActual = `INSERT INTO budget_actuals (id, reservation_id, project, provider, provider_account, generation_id, model, micro_usd, cost_field, tokens_json, flag, created_at)
+      VALUES (?, ?, 'test', 'openrouter', ?, 'gen-x', 'liquid/d1.2-ultra', ?, 'usage', ?, NULL, '2026-11-23T01:00:01.000Z')`;
+    await db.prepare(insertActual).bind('act-a', 'res-a', 'acct-a', 10, '{"prompt":10,"completion":5,"total":15}').all();
+    await db.prepare(insertActual).bind('act-b', 'res-b', 'acct-b', 20, '{"prompt":20,"completion":7,"total":27}').all();
+
+    const report = await readShadowReport(db);
+    assert.equal(report.overall.judgments, 1);
+    assert.equal(report.overall.usage_matched, 0);
+    assert.equal(report.overall.usage_ambiguous, 1);
+    assert.equal(report.overall.total_tokens, 0);
   } finally {
     await mf.dispose();
   }

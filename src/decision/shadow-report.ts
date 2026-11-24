@@ -8,11 +8,20 @@
 // disagreement the shadow run surfaced without applying.
 //
 // Actual token usage is not a judgments column. It is recorded by the budget
-// ledger at settle time (migration 0028, budget_actuals.tokens_json) keyed by
-// generation_id, and judgments.gen_id names the primary generation, so the
-// join below is the shadow record's usage. Adding denormalized token columns
-// to judgments would need a new migration number, which is reserved in the
-// room before use and is not taken here.
+// ledger at settle time (migration 0028, budget_actuals.tokens_json), where
+// actuals are unique per (provider, provider_account, generation_id), and
+// judgments.gen_id names the primary generation, so the join below is the
+// shadow record's usage. Adding denormalized token columns to judgments
+// would need a new migration number, which is reserved in the room before
+// use and is not taken here.
+//
+// Attribution limit: judgments carries no provider or provider_account
+// column, so a gen_id alone cannot say which provider account settled it.
+// Actuals are therefore aggregated per (generation_id, provider,
+// provider_account) and never summed across that boundary. When one gen_id
+// has settled actuals under more than one (provider, provider_account), the
+// usage cannot be attributed to the judgment and is reported as
+// usage_ambiguous instead of being mixed into the token totals.
 //
 // This module only reads and aggregates. It never applies a verdict.
 
@@ -28,6 +37,10 @@ import {
 
 export interface GenerationActual {
   generation_id: string;
+  /** budget_actuals.provider; absent reads as the ledger default 'openrouter'. */
+  provider?: string;
+  /** budget_actuals.provider_account; absent reads as the ledger default ''. */
+  provider_account?: string;
   prompt_tokens: number | null;
   completion_tokens: number | null;
   total_tokens: number | null;
@@ -50,8 +63,14 @@ export interface ShadowGroupStats {
   /** Mean over charged judgments only; uncharged rows are not zero-cost proof. */
   mean_cost_micro_usd: number | null;
   max_cost_micro_usd: number | null;
-  /** Judgments whose gen_id has at least one settled budget actual. */
+  /** Judgments whose gen_id settles under exactly one (provider, provider_account). */
   usage_matched: number;
+  /**
+   * Judgments whose gen_id settles under more than one (provider,
+   * provider_account). Their tokens are not attributable (judgments has no
+   * provider column) and are excluded from the token totals, not mixed in.
+   */
+  usage_ambiguous: number;
   /** usage_matched / judgments carrying a gen_id, or null when none do. */
   usage_coverage: number | null;
   prompt_tokens: number;
@@ -101,6 +120,7 @@ interface Accumulator {
   max_cost_micro_usd: number | null;
   with_gen: number;
   usage_matched: number;
+  usage_ambiguous: number;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
@@ -122,6 +142,7 @@ function emptyAccumulator(): Accumulator {
     max_cost_micro_usd: null,
     with_gen: 0,
     usage_matched: 0,
+    usage_ambiguous: 0,
     prompt_tokens: 0,
     completion_tokens: 0,
     total_tokens: 0,
@@ -137,7 +158,7 @@ function addToken(acc: Accumulator, field: 'prompt_tokens' | 'completion_tokens'
   acc[field] += value;
 }
 
-function accumulate(acc: Accumulator, row: JudgmentRow, actuals: ReadonlyMap<string, GenerationActual>): void {
+function accumulate(acc: Accumulator, row: JudgmentRow, actuals: ReadonlyMap<string, readonly GenerationActual[]>): void {
   acc.judgments += 1;
   acc.verdicts[row.verdict] += 1;
   acc.agreed += row.agreed;
@@ -152,12 +173,17 @@ function accumulate(acc: Accumulator, row: JudgmentRow, actuals: ReadonlyMap<str
   }
   if (row.gen_id !== null) {
     acc.with_gen += 1;
-    const actual = actuals.get(row.gen_id);
-    if (actual) {
+    const matches = actuals.get(row.gen_id) ?? [];
+    if (matches.length === 1) {
+      const actual = matches[0] as GenerationActual;
       acc.usage_matched += 1;
       addToken(acc, 'prompt_tokens', actual.prompt_tokens);
       addToken(acc, 'completion_tokens', actual.completion_tokens);
       addToken(acc, 'total_tokens', actual.total_tokens);
+    } else if (matches.length > 1) {
+      // Settled under several providers/accounts: judgments cannot say
+      // which one is this row's usage, so it stays unattributed.
+      acc.usage_ambiguous += 1;
     }
   }
   if (row.latency_ms !== null) {
@@ -183,6 +209,7 @@ function finishGroup(acc: Accumulator): ShadowGroupStats {
     mean_cost_micro_usd: acc.charged_judgments ? mean(acc.total_cost_micro_usd, acc.charged_judgments) : null,
     max_cost_micro_usd: acc.max_cost_micro_usd,
     usage_matched: acc.usage_matched,
+    usage_ambiguous: acc.usage_ambiguous,
     usage_coverage: rate(acc.usage_matched, acc.with_gen),
     prompt_tokens: acc.prompt_tokens,
     completion_tokens: acc.completion_tokens,
@@ -194,7 +221,7 @@ function finishGroup(acc: Accumulator): ShadowGroupStats {
   };
 }
 
-function groupStats<K extends string>(rows: readonly JudgmentRow[], actuals: ReadonlyMap<string, GenerationActual>, keyOf: (row: JudgmentRow) => K, order: readonly K[] | 'sorted'): Record<K, ShadowGroupStats> {
+function groupStats<K extends string>(rows: readonly JudgmentRow[], actuals: ReadonlyMap<string, readonly GenerationActual[]>, keyOf: (row: JudgmentRow) => K, order: readonly K[] | 'sorted'): Record<K, ShadowGroupStats> {
   const groups = new Map<K, Accumulator>();
   for (const row of rows) {
     const key = keyOf(row);
@@ -210,16 +237,31 @@ function groupStats<K extends string>(rows: readonly JudgmentRow[], actuals: Rea
   return out;
 }
 
+/** Ledger default for budget_actuals.provider (migration 0028). */
+const DEFAULT_PROVIDER = 'openrouter';
+
+/** Aggregation key: actuals merge only within one (generation, provider, account). */
+function actualKey(actual: GenerationActual): string {
+  return `${actual.generation_id}\0${actual.provider ?? DEFAULT_PROVIDER}\0${actual.provider_account ?? ''}`;
+}
+
 /** Pure aggregation. Same rows and actuals give the same report in any input order. */
 export function buildShadowReport(rows: readonly JudgmentRow[], actuals: readonly GenerationActual[] = []): ShadowReport {
-  const byGeneration = new Map<string, GenerationActual>();
+  const byKey = new Map<string, GenerationActual>();
   for (const actual of actuals) {
-    const existing = byGeneration.get(actual.generation_id);
-    if (!existing) { byGeneration.set(actual.generation_id, { ...actual }); continue; }
+    const key = actualKey(actual);
+    const existing = byKey.get(key);
+    if (!existing) { byKey.set(key, { ...actual }); continue; }
     existing.micro_usd += actual.micro_usd;
     existing.prompt_tokens = sumNullable(existing.prompt_tokens, actual.prompt_tokens);
     existing.completion_tokens = sumNullable(existing.completion_tokens, actual.completion_tokens);
     existing.total_tokens = sumNullable(existing.total_tokens, actual.total_tokens);
+  }
+  const byGeneration = new Map<string, GenerationActual[]>();
+  for (const actual of byKey.values()) {
+    const list = byGeneration.get(actual.generation_id);
+    if (list) list.push(actual);
+    else byGeneration.set(actual.generation_id, [actual]);
   }
   const overall = emptyAccumulator();
   for (const row of rows) accumulate(overall, row, byGeneration);
@@ -266,6 +308,8 @@ export function parseTokensJson(json: string): { prompt_tokens: number | null; c
 
 interface RawActualRow {
   generation_id: string;
+  provider: string;
+  provider_account: string;
   tokens_json: string;
   micro_usd: number;
 }
@@ -279,12 +323,12 @@ async function listGenerationActuals(db: Database, generationIds: readonly strin
       const chunk = unique.slice(start, start + 100);
       const placeholders = chunk.map(() => '?').join(', ');
       const { results } = await db.prepare(
-        `SELECT generation_id, tokens_json, micro_usd FROM budget_actuals WHERE generation_id IN (${placeholders})`,
+        `SELECT generation_id, provider, provider_account, tokens_json, micro_usd FROM budget_actuals WHERE generation_id IN (${placeholders})`,
       ).bind(...chunk).all<RawActualRow>();
       for (const row of results) {
         const tokens = parseTokensJson(row.tokens_json);
         if (!tokens) continue;
-        out.push({ generation_id: row.generation_id, micro_usd: row.micro_usd, ...tokens });
+        out.push({ generation_id: row.generation_id, provider: row.provider, provider_account: row.provider_account, micro_usd: row.micro_usd, ...tokens });
       }
     }
   } catch (error) {
