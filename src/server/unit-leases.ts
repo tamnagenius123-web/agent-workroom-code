@@ -10,10 +10,16 @@
 // - Fencing: heartbeat/release only apply to the current holder of a live
 //   lease. A holder that lost its lease to expiry + reclaim cannot extend,
 //   release, or otherwise disturb the new holder's row.
+// - Generation fence (0084): holder id alone cannot tell two executions of
+//   the same holder apart, so every successful claim issues a generation
+//   (incremented on takeover and on refresh). Heartbeat/release must present
+//   the generation from the caller's latest claim; a stale execution of the
+//   same holder id, still holding an older generation, is rejected.
 // - Expiry is lazy and total: once lease_until <= now the lease no longer
 //   fences anyone; sweepExpired only rewrites the state label.
 // - Idempotent retry: the holder re-claiming its own live lease succeeds and
-//   refreshes it, so a retried claim after a lost response is safe.
+//   refreshes it, so a retried claim after a lost response is safe. The
+//   retry returns the new generation, which supersedes the lost one.
 
 import type { Database } from './db.ts';
 
@@ -24,6 +30,8 @@ export interface UnitLease {
   lease_until: number;
   heartbeat_at: number;
   state: UnitLeaseState;
+  /** Fencing token issued by the latest successful claim (0084). */
+  generation: number;
 }
 export interface ClaimOutcome {
   /** True when the caller holds a live lease after this call. */
@@ -41,7 +49,7 @@ function check(unitId: string, holder: string, ttlMs: number): void {
 }
 
 export async function getUnitLease(db: Database, unitId: string): Promise<UnitLease | null> {
-  return db.prepare('SELECT unit_id,holder,lease_until,heartbeat_at,state FROM unit_leases WHERE unit_id=?')
+  return db.prepare('SELECT unit_id,holder,lease_until,heartbeat_at,state,generation FROM unit_leases WHERE unit_id=?')
     .bind(unitId).first<UnitLease>();
 }
 
@@ -56,8 +64,10 @@ export async function claimUnitLease(db: Database, unitId: string, holder: strin
   const wasMine = !!before && before.holder === holder && leaseLive(before, nowMs);
   // One statement is the whole race: the upsert lands only when the stored
   // row is free (released/expired), past its expiry, or already the caller's.
-  await db.prepare(`INSERT INTO unit_leases(unit_id,holder,lease_until,heartbeat_at,state) VALUES (?,?,?,?, 'held')
-    ON CONFLICT(unit_id) DO UPDATE SET holder=excluded.holder,lease_until=excluded.lease_until,heartbeat_at=excluded.heartbeat_at,state='held'
+  // A landed claim also bumps the generation, so any earlier execution of
+  // this same holder id is fenced out from this instant.
+  await db.prepare(`INSERT INTO unit_leases(unit_id,holder,lease_until,heartbeat_at,state,generation) VALUES (?,?,?,?, 'held', 1)
+    ON CONFLICT(unit_id) DO UPDATE SET holder=excluded.holder,lease_until=excluded.lease_until,heartbeat_at=excluded.heartbeat_at,state='held',generation=unit_leases.generation+1
     WHERE unit_leases.state<>'held' OR unit_leases.lease_until<=? OR unit_leases.holder=?`)
     .bind(unitId, holder, nowMs + ttlMs, nowMs, nowMs, holder).all();
   const lease = await getUnitLease(db, unitId);
@@ -65,23 +75,30 @@ export async function claimUnitLease(db: Database, unitId: string, holder: strin
   return { acquired, fresh: acquired && !wasMine, lease };
 }
 
-export async function heartbeatUnitLease(db: Database, unitId: string, holder: string, nowMs: number, ttlMs: number): Promise<boolean> {
-  check(unitId, holder, ttlMs);
-  // Fenced on holder + live lease: an expired lease cannot be revived by a
-  // heartbeat (the holder must re-claim), and a reclaimed lease belongs to
-  // the new holder, so the stale holder's heartbeat matches no row.
-  await db.prepare(`UPDATE unit_leases SET lease_until=?,heartbeat_at=? WHERE unit_id=? AND holder=? AND state='held' AND lease_until>?`)
-    .bind(nowMs + ttlMs, nowMs, unitId, holder, nowMs).all();
-  const lease = await getUnitLease(db, unitId);
-  return !!lease && lease.holder === holder && lease.state === 'held' && lease.heartbeat_at === nowMs && lease.lease_until === nowMs + ttlMs;
+function checkGeneration(generation: number): void {
+  if (!Number.isInteger(generation) || generation < 1) throw new Error('unit lease: generation must be a positive integer');
 }
 
-export async function releaseUnitLease(db: Database, unitId: string, holder: string): Promise<boolean> {
-  if (!unitId || !holder) throw new Error('unit lease: unit_id and holder are required');
-  await db.prepare(`UPDATE unit_leases SET state='released' WHERE unit_id=? AND holder=? AND state='held'`)
-    .bind(unitId, holder).all();
+export async function heartbeatUnitLease(db: Database, unitId: string, holder: string, generation: number, nowMs: number, ttlMs: number): Promise<boolean> {
+  check(unitId, holder, ttlMs);
+  checkGeneration(generation);
+  // Fenced on holder + generation + live lease: an expired lease cannot be
+  // revived by a heartbeat (the holder must re-claim), a reclaimed lease
+  // belongs to the new holder, and an older execution of the same holder id
+  // carries a stale generation — all three match no row and return false.
+  await db.prepare(`UPDATE unit_leases SET lease_until=?,heartbeat_at=? WHERE unit_id=? AND holder=? AND generation=? AND state='held' AND lease_until>?`)
+    .bind(nowMs + ttlMs, nowMs, unitId, holder, generation, nowMs).all();
   const lease = await getUnitLease(db, unitId);
-  return !!lease && lease.holder === holder && lease.state === 'released';
+  return !!lease && lease.holder === holder && lease.generation === generation && lease.state === 'held' && lease.heartbeat_at === nowMs && lease.lease_until === nowMs + ttlMs;
+}
+
+export async function releaseUnitLease(db: Database, unitId: string, holder: string, generation: number): Promise<boolean> {
+  if (!unitId || !holder) throw new Error('unit lease: unit_id and holder are required');
+  checkGeneration(generation);
+  await db.prepare(`UPDATE unit_leases SET state='released' WHERE unit_id=? AND holder=? AND generation=? AND state='held'`)
+    .bind(unitId, holder, generation).all();
+  const lease = await getUnitLease(db, unitId);
+  return !!lease && lease.holder === holder && lease.generation === generation && lease.state === 'released';
 }
 
 /** Labels every held-but-expired row 'expired'. Returns the swept unit ids. */
