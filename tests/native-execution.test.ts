@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createLocalNativeHook, NativeHold, nativeEnvironment } from '../scripts/orch/native-execution.ts';
@@ -40,6 +40,24 @@ async function fixture(change?: (unit: NativeUnit) => void) {
   return { dir, source, root, unit, git, identity, actions, configure, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 const signal = () => new AbortController().signal;
+
+test('a descendant named ..cache is rejected before native root creation', async () => {
+  const f = await fixture();
+  try {
+    await f.configure();
+    const forbidden = join(f.source, '..cache');
+    const result = await createLocalNativeHook({ spec_path: join(f.dir, 'unit.json'),
+      approved_sha256: nativeDigest(JSON.stringify(f.unit)), repository: f.source, root: forbidden })
+      .then(() => ({ error: null }), (error: unknown) => ({ error }));
+    const created = await lstat(forbidden).then(() => true, (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
+    assert.deepEqual({ accepted: result.error === null, created }, { accepted: false, created: false });
+    assert.ok(result.error instanceof NativeHold);
+    assert.equal(result.error.code, 'native_root_inside_repository');
+  } finally { await f.cleanup(); }
+});
 
 test('native data tools produce real exact-head checks and an isolated local branch; replay performs no new write or commit', async () => {
   const f = await fixture();

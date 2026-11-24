@@ -90,7 +90,8 @@ export async function createLocalNativeHook(options: LocalNativeOptions): Promis
   const unit = parsed.data, specHash = nativeDigest(bytes);
   const cap = rosterCapMicros({ native: { cap_usd: unit.budget.usd_max } }, 'native');
   const source = await realpath(options.repository), root = resolve(options.root), gitPath = options.git_path ?? '/usr/bin/git';
-  if (!isAbsolute(gitPath) || relative(source, root) === '' || !relative(source, root).startsWith('..')) throw new NativeHold('native_root_inside_repository');
+  const displacement = relative(source, root);
+  if (!isAbsolute(gitPath) || !(displacement === '..' || displacement.startsWith('..' + sep))) throw new NativeHold('native_root_inside_repository');
   await mkdir(root, { recursive: true, mode: 0o700 });
   if (await realpath(root) !== root) throw new NativeHold('native_root_alias');
   const home = join(root, 'home'); await mkdir(home, { mode: 0o700, recursive: true });
