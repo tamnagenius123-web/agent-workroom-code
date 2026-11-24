@@ -1,7 +1,7 @@
 # AGENTS.md — Agent Workroom (3-repo)
 
 Working rules for every agent in the Agent Workroom (muse, dots/Codex, grok, claude).
-The copy at a repository root governs that repository. Full principles and background live in the playbook (`WORKROOM_PLAYBOOK.md`) and in repo ① `docs/OWNER_DECISIONS.md`. On conflict, the owner-decision record wins.
+The copy at a repository root governs that repository. Full principles and background live in the playbook (`docs/WORKROOM_PLAYBOOK.md`) and in repo ① `docs/OWNER_DECISIONS.md`. On conflict, the owner-decision record wins.
 
 ## 0. Which repo
 
