@@ -130,3 +130,58 @@ test('a successful wrk_ request leaves a last_used stamp and an audit row; a rej
     await app.close();
   }
 });
+
+test('a failing auth_audit write does not fail wrk_ authentication, and the failure is signalled', async () => {
+  const app = await boot(true);
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
+  // The worker runs under Miniflare: its console.warn is forwarded to this
+  // process's stdout/stderr, bypassing the console object, so capture both.
+  const captured: string[] = [];
+  const originalStdoutWrite = process.stdout.write.bind(process.stdout);
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  const capture = (write: (chunk: string) => boolean) => (chunk: unknown, ...rest: unknown[]) => {
+    captured.push(String(chunk));
+    return (write as (...a: unknown[]) => boolean)(chunk, ...rest);
+  };
+  process.stdout.write = capture(originalStdoutWrite) as typeof process.stdout.write;
+  process.stderr.write = capture(originalStderrWrite) as typeof process.stderr.write;
+  try {
+    // Break only the audit sink: the INSERT INTO auth_audit now throws on
+    // every call. The credential itself is untouched and still valid.
+    await app.db.prepare('DROP TABLE auth_audit').all();
+    const response = await app.mf.dispatchFetch(RESOURCE, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + TOKEN,
+        'content-type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        'MCP-Protocol-Version': '2026-07-28',
+        'MCP-Method': 'tools/call',
+        'Mcp-Name': 'workroom_whoami',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'tools/call',
+        params: { name: 'workroom_whoami', arguments: { schema_version: '1' }, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28', 'io.modelcontextprotocol/clientCapabilities': {} } },
+      }),
+    });
+    // Fail-soft: authentication succeeds even though the audit row could
+    // not be written, and the last_used stamp (the other signal) still lands.
+    assert.equal(response.status, 200);
+    const stamped = await lastUsed(app);
+    assert.ok(stamped !== null && stamped > 0);
+    // The failure must not disappear silently: the worker logs the
+    // structured wrk_auth_audit_failed signal (error class only). The
+    // forwarded log line can land just after the response, so poll briefly.
+    const signalled = async () => warnings.some(line => line.includes('wrk_auth_audit_failed'))
+      || captured.some(line => line.includes('wrk_auth_audit_failed'));
+    for (let i = 0; i < 20 && !(await signalled()); i++) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.ok(await signalled(), `expected a wrk_auth_audit_failed signal, got console=${JSON.stringify(warnings)} captured=${JSON.stringify(captured.slice(-5))}`);
+  } finally {
+    console.warn = originalWarn;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    await app.close();
+  }
+});
