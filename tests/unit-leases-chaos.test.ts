@@ -68,11 +68,14 @@ test('idempotent retry: the holder re-claiming its own lease always succeeds', a
   try {
     const first = await claimUnitLease(db, 'U2', 'agent:alpha', T0, 30_000);
     assert.equal(first.acquired, true);
+    assert.equal(first.lease?.generation, 1);
     for (let i = 1; i <= 3; i++) {
       const retry = await claimUnitLease(db, 'U2', 'agent:alpha', T0 + i * 1000, 30_000);
       assert.equal(retry.acquired, true, 'retry ' + i);
       assert.equal(retry.fresh, false, 'retry ' + i + ' is a refresh, not a takeover');
       assert.equal(retry.lease?.lease_until, T0 + i * 1000 + 30_000);
+      // Each landed claim issues the next generation, superseding the last.
+      assert.equal(retry.lease?.generation, 1 + i, 'retry ' + i + ' generation');
     }
     assert.equal(await rows(db), 1);
   } finally { await close(); }
@@ -81,14 +84,15 @@ test('idempotent retry: the holder re-claiming its own lease always succeeds', a
 test('expiry + reclaim: the stale holder is fenced out of heartbeat and release', async () => {
   const { db, close } = await start();
   try {
-    await claimUnitLease(db, 'U3', 'agent:alpha', T0, 1_000);
+    const a = await claimUnitLease(db, 'U3', 'agent:alpha', T0, 1_000);
     // Alpha crashes: no heartbeat. The lease lapses and beta takes over.
     const b = await claimUnitLease(db, 'U3', 'agent:beta', T0 + 1_001, 30_000);
     assert.equal(b.acquired, true);
     assert.equal(b.fresh, true);
+    assert.equal(b.lease?.generation, (a.lease?.generation ?? 0) + 1);
     // Alpha restarts with stale state and tries to act on the lease it lost.
-    assert.equal(await heartbeatUnitLease(db, 'U3', 'agent:alpha', T0 + 1_002, 30_000), false);
-    assert.equal(await releaseUnitLease(db, 'U3', 'agent:alpha'), false);
+    assert.equal(await heartbeatUnitLease(db, 'U3', 'agent:alpha', a.lease?.generation ?? -1, T0 + 1_002, 30_000), false);
+    assert.equal(await releaseUnitLease(db, 'U3', 'agent:alpha', a.lease?.generation ?? -1), false);
     const lease = await getUnitLease(db, 'U3');
     assert.equal(lease?.holder, 'agent:beta');
     assert.equal(lease?.state, 'held');
@@ -99,12 +103,13 @@ test('expiry + reclaim: the stale holder is fenced out of heartbeat and release'
 test('heartbeat extends a live lease and keeps rivals out past the original expiry', async () => {
   const { db, close } = await start();
   try {
-    await claimUnitLease(db, 'U4', 'agent:alpha', T0, 1_000);
-    assert.equal(await heartbeatUnitLease(db, 'U4', 'agent:alpha', T0 + 500, 1_000), true);
+    const a = await claimUnitLease(db, 'U4', 'agent:alpha', T0, 1_000);
+    const gen = a.lease?.generation ?? -1;
+    assert.equal(await heartbeatUnitLease(db, 'U4', 'agent:alpha', gen, T0 + 500, 1_000), true);
     const b = await claimUnitLease(db, 'U4', 'agent:beta', T0 + 1_200, 30_000);
     assert.equal(b.acquired, false);
-    // A non-holder heartbeat never extends anything.
-    assert.equal(await heartbeatUnitLease(db, 'U4', 'agent:beta', T0 + 1_300, 99_000), false);
+    // A non-holder heartbeat never extends anything, even with the live generation.
+    assert.equal(await heartbeatUnitLease(db, 'U4', 'agent:beta', gen, T0 + 1_300, 99_000), false);
     const lease = await getUnitLease(db, 'U4');
     assert.equal(lease?.lease_until, T0 + 1_500);
   } finally { await close(); }
@@ -113,25 +118,27 @@ test('heartbeat extends a live lease and keeps rivals out past the original expi
 test('an expired lease cannot be revived by heartbeat; the holder must re-claim', async () => {
   const { db, close } = await start();
   try {
-    await claimUnitLease(db, 'U5', 'agent:alpha', T0, 1_000);
-    assert.equal(await heartbeatUnitLease(db, 'U5', 'agent:alpha', T0 + 1_500, 1_000), false);
+    const a = await claimUnitLease(db, 'U5', 'agent:alpha', T0, 1_000);
+    assert.equal(await heartbeatUnitLease(db, 'U5', 'agent:alpha', a.lease?.generation ?? -1, T0 + 1_500, 1_000), false);
     const again = await claimUnitLease(db, 'U5', 'agent:alpha', T0 + 1_500, 1_000);
     assert.equal(again.acquired, true);
     assert.equal(again.fresh, true);
+    assert.equal(again.lease?.generation, (a.lease?.generation ?? 0) + 1);
   } finally { await close(); }
 });
 
 test('release frees the unit at once and only the holder can release', async () => {
   const { db, close } = await start();
   try {
-    await claimUnitLease(db, 'U6', 'agent:alpha', T0, 30_000);
-    assert.equal(await releaseUnitLease(db, 'U6', 'agent:beta'), false);
-    assert.equal(await releaseUnitLease(db, 'U6', 'agent:alpha'), true);
+    const a = await claimUnitLease(db, 'U6', 'agent:alpha', T0, 30_000);
+    const gen = a.lease?.generation ?? -1;
+    assert.equal(await releaseUnitLease(db, 'U6', 'agent:beta', gen), false);
+    assert.equal(await releaseUnitLease(db, 'U6', 'agent:alpha', gen), true);
     const b = await claimUnitLease(db, 'U6', 'agent:beta', T0 + 1, 30_000);
     assert.equal(b.acquired, true);
     assert.equal(b.fresh, true);
     // Releasing twice is a no-op, not an error (idempotent teardown).
-    assert.equal(await releaseUnitLease(db, 'U6', 'agent:alpha'), false);
+    assert.equal(await releaseUnitLease(db, 'U6', 'agent:alpha', gen), false);
   } finally { await close(); }
 });
 
@@ -140,8 +147,8 @@ test('sweep labels only held-and-expired rows and is itself idempotent', async (
   try {
     await claimUnitLease(db, 'U7a', 'agent:alpha', T0, 1_000);
     await claimUnitLease(db, 'U7b', 'agent:beta', T0, 60_000);
-    await claimUnitLease(db, 'U7c', 'agent:alpha', T0, 1_000);
-    await releaseUnitLease(db, 'U7c', 'agent:alpha');
+    const c = await claimUnitLease(db, 'U7c', 'agent:alpha', T0, 1_000);
+    await releaseUnitLease(db, 'U7c', 'agent:alpha', c.lease?.generation ?? -1);
     assert.deepEqual(await sweepExpiredUnitLeases(db, T0 + 2_000), ['U7a']);
     assert.equal((await getUnitLease(db, 'U7a'))?.state, 'expired');
     assert.equal((await getUnitLease(db, 'U7b'))?.state, 'held');
@@ -150,18 +157,56 @@ test('sweep labels only held-and-expired rows and is itself idempotent', async (
   } finally { await close(); }
 });
 
-test('chaos restart: a restarted holder keeps fencing by holder id alone', async () => {
+test('chaos restart: a restarted holder re-claims to learn the current generation', async () => {
   const { db, close } = await start();
   try {
     // Holder process claims, then "restarts": no in-memory state survives,
-    // the same holder id heartbeats from a cold start and still owns it.
-    await claimUnitLease(db, 'U8', 'agent:alpha', T0, 5_000);
-    assert.equal(await heartbeatUnitLease(db, 'U8', 'agent:alpha', T0 + 4_000, 5_000), true);
+    // so it cannot know the generation it was issued. The restart re-claims
+    // (a refresh of its own live lease) to learn the current generation,
+    // and only then can it heartbeat. The pre-restart generation is stale
+    // the moment the refresh lands.
+    const first = await claimUnitLease(db, 'U8', 'agent:alpha', T0, 5_000);
+    const staleGen = first.lease?.generation ?? -1;
+    const restarted = await claimUnitLease(db, 'U8', 'agent:alpha', T0 + 1_000, 5_000);
+    assert.equal(restarted.acquired, true);
+    assert.equal(restarted.fresh, false);
+    const gen = restarted.lease?.generation ?? -1;
+    assert.equal(gen, staleGen + 1);
+    assert.equal(await heartbeatUnitLease(db, 'U8', 'agent:alpha', staleGen, T0 + 2_000, 5_000), false);
+    assert.equal(await heartbeatUnitLease(db, 'U8', 'agent:alpha', gen, T0 + 4_000, 5_000), true);
     const b = await claimUnitLease(db, 'U8', 'agent:beta', T0 + 8_500, 30_000);
     assert.equal(b.acquired, false);
     // Alpha finally dies for real; after the extended expiry beta takes over.
     const b2 = await claimUnitLease(db, 'U8', 'agent:beta', T0 + 9_001, 30_000);
     assert.equal(b2.acquired, true);
+  } finally { await close(); }
+});
+
+test('same holder re-claim: the stale generation cannot heartbeat or release the new lease', async () => {
+  const { db, close } = await start();
+  try {
+    // Execution 1 of alpha claims, then its lease lapses while a delayed
+    // heartbeat/release from execution 1 is still in flight.
+    const exec1 = await claimUnitLease(db, 'U10', 'agent:alpha', T0, 1_000);
+    const gen1 = exec1.lease?.generation ?? -1;
+    // Execution 2 of the same holder id re-claims after expiry: a new lease
+    // with a new generation, indistinguishable by holder id alone.
+    const exec2 = await claimUnitLease(db, 'U10', 'agent:alpha', T0 + 1_001, 30_000);
+    assert.equal(exec2.acquired, true);
+    assert.equal(exec2.fresh, true);
+    const gen2 = exec2.lease?.generation ?? -1;
+    assert.equal(gen2, gen1 + 1);
+    // Execution 1's delayed operations arrive now and must be rejected:
+    // they may not extend, and may not release, execution 2's lease.
+    assert.equal(await heartbeatUnitLease(db, 'U10', 'agent:alpha', gen1, T0 + 1_002, 99_000), false);
+    assert.equal(await releaseUnitLease(db, 'U10', 'agent:alpha', gen1), false);
+    const lease = await getUnitLease(db, 'U10');
+    assert.equal(lease?.state, 'held');
+    assert.equal(lease?.generation, gen2);
+    assert.equal(lease?.lease_until, T0 + 1_001 + 30_000);
+    // Execution 2's own operations still work with its generation.
+    assert.equal(await heartbeatUnitLease(db, 'U10', 'agent:alpha', gen2, T0 + 2_000, 30_000), true);
+    assert.equal(await releaseUnitLease(db, 'U10', 'agent:alpha', gen2), true);
   } finally { await close(); }
 });
 
