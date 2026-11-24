@@ -5,7 +5,7 @@ import { ConnectionAuthority, type Assertion } from '../connection/authority.ts'
 import { endpoint } from '../connection/policy.ts';
 import { verifyPassword, needsRehash, hashPassword } from './password.ts';
 import { b64url, fromB64url, hmac, random, sha256, same } from './crypto.ts';
-import { headerBearer, isAgentToken, queryCarriesWrk, readAgentCredential } from './agent-credential.ts';
+import { headerBearer, isAgentToken, queryCarriesWrk, readAgentCredential, recordAgentCredentialUse } from './agent-credential.ts';
 
 export interface G5Env extends Env {
   WORKROOM_RESOURCE?: string; WORKROOM_INGRESS_ID?: string; OWNER_PASSWORD_HASH?: string;
@@ -368,6 +368,21 @@ export async function g5Authenticate(request: Request, env: G5Env): Promise<Iden
     if (new URL(request.url).origin !== c.issuer) throw new Fault('FORBIDDEN', 'Connection origin denied.', 403);
     const row = await readAgentCredential(env.DB, presented, Date.now());
     if (!row) throw new Fault('UNAUTHENTICATED', 'Connection identity could not be verified.', 401);
+    // Usage signal for the wrk_ lane, at parity with the OAuth resource
+    // audit below: a throttled last_used_at stamp plus an auth_audit row.
+    // Both carry only the non-secret key_id; the audit client_id slot holds
+    // the key_id so a row names the credential that was used.
+    // Best effort, like recordReads telemetry: the credential decision is
+    // already made by readAgentCredential above, so neither signal write may
+    // fail authentication. A failed write is logged by error class only
+    // (never the message, which can carry request data) so the loss of the
+    // signal stays visible instead of disappearing silently.
+    try {
+      await recordAgentCredentialUse(env.DB, row.key_id, Date.now());
+    } catch (e) { console.warn('wrk_usage_stamp_failed', (e as Error)?.name ?? 'Error'); }
+    try {
+      await audit(env.DB, 'resource:agent_credential', 'allow', 'OK', row.principal_id, row.key_id);
+    } catch (e) { console.warn('wrk_auth_audit_failed', (e as Error)?.name ?? 'Error'); }
     return { principal: row.principal_id, write: row.scopes.includes('workroom.write') };
   }
   if (!c) throw closed();
