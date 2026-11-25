@@ -1,0 +1,7 @@
+name = "workroom"
+version = "0.1.0"
+defaultTargets = ["Workroom"]
+
+[[lean_lib]]
+name = "Workroom"
+

@@ -1,0 +1,50 @@
+%% AP-WR-LEAN-41-20261122-r1: semantic integration gates, not a Lean import graph.
+%% Edges mean a downstream operational acceptance claim must discharge the
+%% upstream boundary. They do not assert that the gate is currently closed.
+%% Independent reference proofs and counterexamples were executed while gates
+%% remained open; no production changes or deployments are implied.
+%% All 41 IDs occur exactly once as obligation groups below.
+flowchart TB
+  Sources["Pinned six-repository sources and frozen 41-ID specification"]
+  Repo["R01 R02: artifact assembly and unique provider binding"]
+  Authority["A01 A02: authenticated authority and text non-amplification"]
+  Store["Authoritative storage, clock and real operation histories"]
+  Tasks["T00–T07: histories, leases, CAS, immutable spec and commit freshness"]
+  Effects["E01–E05: durable intake, UNKNOWN fence, takeover and checkpoint identity"]
+  Budget["B01–B05: reservation and exact, isolated settlement"]
+  Closure["V01 V02 G02: frozen independent evidence and prerequisite closure"]
+  Refinement["X01 X02: actual-step refinement and reachable-state invariants"]
+  Context["C01 C02 M01 M02: mandatory context, exact wire budget and scoped memory"]
+  Lineage["C03 M03 G01: structural evidence, lineage and decreasing fuel"]
+  Evolution["H01–H06: protected proposals, heldout gate, CAS promotion and rollback"]
+  Environment["Explicit scheduler, resource, network, timeout and reconciliation assumptions"]
+  Progress["X03: conditional terminal-or-blocked progress"]
+  Open["Open integration gates and scoped counterexamples remain in the acceptance matrix"]
+
+  Sources --> Repo
+  Sources --> Authority
+  Repo --> Store
+  Authority --> Store
+  Store --> Tasks
+  Authority --> Effects
+  Tasks --> Effects
+  Effects --> Budget
+  Authority --> Budget
+  Tasks --> Closure
+  Budget --> Closure
+  Closure --> Refinement
+  Store --> Refinement
+  Effects --> Refinement
+  Refinement --> Context
+  Context --> Lineage
+  Closure --> Evolution
+  Lineage --> Evolution
+  Authority --> Evolution
+  Refinement --> Progress
+  Evolution --> Progress
+  Lineage --> Progress
+  Environment --> Progress
+  Tasks -. "T02 T06 T07 source counterexamples" .-> Open
+  Effects -. "E01 E02 source counterexamples" .-> Open
+  Refinement -. "X01 source refinement refuted" .-> Open
+  Open -. "Continue independent proofs; withhold integration acceptance" .-> Progress
