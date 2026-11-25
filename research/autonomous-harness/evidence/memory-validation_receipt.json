@@ -1,0 +1,58 @@
+{
+  "recorded_at_utc": "2026-11-25T09:50:41.584909+00:00",
+  "command": "python -B -m unittest -v test_procedural_memory test_transfer",
+  "exit_code": 0,
+  "stdout": "",
+  "stderr": "test_candidate_cannot_be_retrieved_before_validation (test_procedural_memory.MemoryTests.test_candidate_cannot_be_retrieved_before_validation) ... ok\ntest_capability_and_execution_budget_are_hard_filters (test_procedural_memory.MemoryTests.test_capability_and_execution_budget_are_hard_filters) ... ok\ntest_corrupt_persisted_procedure_does_not_get_retrieved (test_procedural_memory.MemoryTests.test_corrupt_persisted_procedure_does_not_get_retrieved) ... ok\ntest_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) ... ok\ntest_diversity_penalty_avoids_near_duplicate_second_result (test_procedural_memory.MemoryTests.test_diversity_penalty_avoids_near_duplicate_second_result) ... ok\ntest_exact_utf8_budget_includes_complete_rendered_context (test_procedural_memory.MemoryTests.test_exact_utf8_budget_includes_complete_rendered_context) ... ok\ntest_expired_after_retrieval_is_rejected_on_consumption (test_procedural_memory.MemoryTests.test_expired_after_retrieval_is_rejected_on_consumption) ... ok\ntest_expired_and_future_validation_are_excluded (test_procedural_memory.MemoryTests.test_expired_and_future_validation_are_excluded) ... ok\ntest_failed_validation_is_not_promoted (test_procedural_memory.MemoryTests.test_failed_validation_is_not_promoted) ... ok\ntest_hidden_evaluation_cannot_enter_memory (test_procedural_memory.MemoryTests.test_hidden_evaluation_cannot_enter_memory) ... ok\ntest_identity_idempotency_and_conflict (test_procedural_memory.MemoryTests.test_identity_idempotency_and_conflict) ... ok\ntest_irrelevant_memory_does_not_consume_context (test_procedural_memory.MemoryTests.test_irrelevant_memory_does_not_consume_context) ... ok\ntest_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) ... ok\ntest_negative_limits_and_bool_limits_rejected (test_procedural_memory.MemoryTests.test_negative_limits_and_bool_limits_rejected) ... ok\ntest_project_and_task_family_are_hard_filters (test_procedural_memory.MemoryTests.test_project_and_task_family_are_hard_filters) ... ok\ntest_restart_preserves_procedure_and_receipts (test_procedural_memory.MemoryTests.test_restart_preserves_procedure_and_receipts) ... ok\ntest_retraction_is_immediate_and_cannot_be_revived (test_procedural_memory.MemoryTests.test_retraction_is_immediate_and_cannot_be_revived) ... ok\ntest_retrieval_usage_outcome_and_causal_claim_are_separate (test_procedural_memory.MemoryTests.test_retrieval_usage_outcome_and_causal_claim_are_separate) ... ok\ntest_revalidation_requires_fresh_retrieval_binding (test_procedural_memory.MemoryTests.test_revalidation_requires_fresh_retrieval_binding) ... ok\ntest_revoked_source_and_validation_evidence_are_excluded (test_procedural_memory.MemoryTests.test_revoked_source_and_validation_evidence_are_excluded) ... ok\ntest_source_evidence_expiry_is_separate (test_procedural_memory.MemoryTests.test_source_evidence_expiry_is_separate) ... ok\ntest_source_scope_is_checked_before_proposal (test_procedural_memory.MemoryTests.test_source_scope_is_checked_before_proposal) ... ok\ntest_supersession_requires_valid_replacement_and_preserves_history (test_procedural_memory.MemoryTests.test_supersession_requires_valid_replacement_and_preserves_history) ... ok\ntest_tool_schema_and_version_are_hard_filters (test_procedural_memory.MemoryTests.test_tool_schema_and_version_are_hard_filters) ... ok\ntest_unbound_use_and_unverified_success_are_rejected (test_procedural_memory.MemoryTests.test_unbound_use_and_unverified_success_are_rejected) ... ok\ntest_validation_binds_exact_bytes_and_different_source_tasks (test_procedural_memory.MemoryTests.test_validation_binds_exact_bytes_and_different_source_tasks) ... ok\ntest_all_arms_use_new_tasks_and_same_outputs (test_transfer.TransferTests.test_all_arms_use_new_tasks_and_same_outputs) ... ok\ntest_invalid_procedure_fails_independent_output_check (test_transfer.TransferTests.test_invalid_procedure_fails_independent_output_check) ... ok\ntest_protocol_transfer_changes_actual_tool_trace (test_transfer.TransferTests.test_protocol_transfer_changes_actual_tool_trace) ... ok\n\n----------------------------------------------------------------------\nRan 29 tests in 0.038s\n\nOK\n",
+  "mutation_control_exit": 0,
+  "demo_exit": 0,
+  "independent_review_closed": true,
+  "artifacts": {
+    "procedural_memory.py": {
+      "bytes": 27746,
+      "sha256": "e4589f0066e7b3e2ac6b603a3f2bd6ba522cc3e86cdf2ebe35141aa7fc4cb9ad"
+    },
+    "demo_transfer.py": {
+      "bytes": 9073,
+      "sha256": "1f8e5d17239a1ba1e6079e29d242e5f8d0ad31bb2a16c390bf1cc2e61ebb613e"
+    },
+    "test_procedural_memory.py": {
+      "bytes": 16906,
+      "sha256": "23e14db67192fb80a0351fc98b62bf18719f2aa7db9882415a6b0b6a6f83bd6e"
+    },
+    "test_transfer.py": {
+      "bytes": 1683,
+      "sha256": "4eb4fd619398163fb14dbf91a3d882b1c86dec72d28b1b86921faea05eba0948"
+    },
+    "run_mutation_controls.py": {
+      "bytes": 2988,
+      "sha256": "c2597cf768f5d6c729bfa750c5a58c359003f3fb0dbbe777a24315fd6c14c632"
+    },
+    "README.ko.md": {
+      "bytes": 13832,
+      "sha256": "1c39f7e481eb8fd12a5b627b412c748cac844ab078d808645ac3e8b7f8cdf42b"
+    },
+    "demo_results.json": {
+      "bytes": 4412,
+      "sha256": "096bd64fb11e1b446ea16e49337b764cdf812312ee8cdf456aff517f3cba2c24"
+    },
+    "mutation_controls.json": {
+      "bytes": 8807,
+      "sha256": "c7f340a5c8dd9857c927c3516541e4a45c76d6f5fe70dc3a38650edfc831566e"
+    },
+    "red_revalidation.log": {
+      "bytes": 888,
+      "sha256": "d12c7191bf8835aa0d6c0ae68e47dc6c5c7b485847ce9727a3e3e438315a6b8d"
+    },
+    "red_independent_review.log": {
+      "bytes": 6437,
+      "sha256": "2e59a8057efee8e0279353fccd2044e08e01947963f1eda85810479c38e8a18e"
+    },
+    "independent_review_fixed.json": {
+      "bytes": 529,
+      "sha256": "97e08af1374631ef169f5e359606ca2b4c2433f5ec033cefd6b7009e62e10139"
+    }
+  },
+  "private_audit_excluded": "SOURCE_AUDIT.ko.md",
+  "external_provider_calls": 0
+}

@@ -1,0 +1,3 @@
+'WorkroomAutonomy.promotion_sound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.mismatched_candidate_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.author_cannot_self_promote' depends on axioms: [propext, Quot.sound]

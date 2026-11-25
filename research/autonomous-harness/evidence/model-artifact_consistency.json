@@ -1,0 +1,7 @@
+{
+  "validation_unique_tasks": 24,
+  "confirmation_unique_tasks": 24,
+  "exact_task_overlap": 0,
+  "campaign_source_matches_evaluator": true,
+  "kernel_artifact_source_matches": true
+}

@@ -1,0 +1,23 @@
+{
+  "original_input": {
+    "x": 1
+  },
+  "tool_observed_input": [
+    {
+      "x": 1
+    }
+  ],
+  "caller_input_after": {
+    "x": 2
+  },
+  "result": {
+    "status": "verified",
+    "result": {
+      "x": 2
+    },
+    "replayed": false
+  },
+  "ledger_input_digest": "5041bf1f713df204784353e82f6a4a535931cb64f1f4b4a5aeaffcb720918b22",
+  "original_input_digest": "5041bf1f713df204784353e82f6a4a535931cb64f1f4b4a5aeaffcb720918b22",
+  "checker_should_reject_original_input": true
+}

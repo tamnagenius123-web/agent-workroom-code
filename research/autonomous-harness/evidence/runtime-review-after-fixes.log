@@ -1,0 +1,23 @@
+✔ driver invokes optional harness admission before any model dispatch (7.989844ms)
+✔ actual runDriver pins approved model, bundle and memory before existing dispatch and submission (19.258306ms)
+✔ harness rejects model outside host admission before dispatch (2.636548ms)
+✔ harness rejects bundle outside host admission before dispatch (1.825444ms)
+✔ harness rejects project outside host admission before dispatch (1.635136ms)
+✔ harness rejects family outside host admission before dispatch (2.068624ms)
+✔ harness rejects shared outside host admission before dispatch (2.761978ms)
+✔ harness rejects bytes outside host admission before dispatch (1.963985ms)
+✔ saved run keeps its exact memory and bundle after backpressure; selector is not rerun (18.164244ms)
+✔ changed admission and tampered memory fail closed on a saved pin (1.234977ms)
+✔ binding cannot be applied to a changed task specification or another principal (0.331865ms)
+✔ explicit driver billing project cannot differ from the admitted project (1.361079ms)
+✔ native and harness model contracts must agree (1.160924ms)
+✔ independent review: admission project must bind actual execution project (6.05329ms)
+✔ independent review: nonreturning selector must respect driver wall bound (15.200539ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 738.122612

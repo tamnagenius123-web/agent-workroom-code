@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "source_sha256": {
+    "model_tools.py": "39da5f07b87bacc0d364c0e1e573a3e9c2ce38af1df1de8007310b2471037e06",
+    "rsi_campaign.py": "5bccc159e8e6f2ef3bba3ab41249342461362e4fead2297e05d92fc125d9aa0a",
+    "test_model_tools.py": "2e01ac285c5b00d50ced0da80bc2680fdad3cc193990ff00bfe8cbdbadbc83d6",
+    "test_rsi_campaign.py": "89a482bd8b855a0795c440c48d3f3da2e8b24c28256a945339aaa1a4876d128e"
+  },
+  "mutants_killed": 2
+}

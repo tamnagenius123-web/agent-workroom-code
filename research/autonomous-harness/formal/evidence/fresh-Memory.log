@@ -1,0 +1,4 @@
+'WorkroomAutonomy.retrieval_sound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_never_sealed' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_compatible_tool' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_provenance_scope' depends on axioms: [propext, Quot.sound]

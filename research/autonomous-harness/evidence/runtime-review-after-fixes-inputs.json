@@ -1,0 +1,8 @@
+{
+  "source_hashes": {
+    "scripts/orch/driver.ts": "4b2e5de72243929b3436208616d7eea1c04b754b2b76d864fdce378161796aee",
+    "scripts/orch/harness-contract.ts": "a1589b963ade445353d02590f486ab2930fda3dc4ff8cfde4519dbe398aaf5cd",
+    "tests/harness-control.test.ts": "9000abb9d3efd17b3b5d071f605c88fb1e7fba00c64960608b24042df175a0fe"
+  },
+  "exit_code": 0
+}

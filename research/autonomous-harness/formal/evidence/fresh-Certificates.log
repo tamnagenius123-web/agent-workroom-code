@@ -1,0 +1,5 @@
+'WorkroomAutonomy.potential_bound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.certified_shortest_path' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.closed_cut_contains_path' does not depend on any axioms
+'WorkroomAutonomy.certified_unreachable' does not depend on any axioms
+'WorkroomAutonomy.cumulative_improvement' depends on axioms: [propext, Quot.sound]

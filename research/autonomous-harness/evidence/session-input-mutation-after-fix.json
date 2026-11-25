@@ -1,0 +1,26 @@
+{
+  "input_mutation_result": {
+    "status": "failed",
+    "result": {
+      "x": 2
+    },
+    "replayed": false
+  },
+  "tool_observed_input": [
+    {
+      "x": 1
+    }
+  ],
+  "checker_mutation_result": {
+    "status": "verified",
+    "result": {
+      "x": 3
+    },
+    "replayed": false
+  },
+  "checks": {
+    "original_input_mismatch_rejected": true,
+    "checker_cannot_rewrite_settled_result": true
+  },
+  "session_runtime_sha256": "6e87f5df53f6dae85793fe1a23b1cfd6f9522b33efbbaf51525c87eb7cc4acd5"
+}

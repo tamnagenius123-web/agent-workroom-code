@@ -1,0 +1,6 @@
+name = "workroomAutonomy"
+version = "0.1.0"
+defaultTargets = ["WorkroomAutonomy"]
+
+[[lean_lib]]
+name = "WorkroomAutonomy"

@@ -1,0 +1,17 @@
+{
+  "Audit.lean": "64ba79aa9f97650e22744bb5a40435838291934418276e0f9bc7996560780abd",
+  "PROOF_OBLIGATIONS.tsv": "8c568881e0847ad52bd57ccfbfb38f82f71eb400d9fc4e558a026916da062ce0",
+  "README.md": "878b3fe23f3382c61c7652408fa264352e4dc55a8a33ea4874a163a46108c4df",
+  "SPEC.md": "cc726e4a61736e9068dd7cac1043e6836e0bf6c69c151a73a56fcc4f1a8424fc",
+  "WorkroomAutonomy.lean": "b2520316b57b14d2a8058ce0fcffc39d94958e8303ca871a1c78dc0f6b1ab38d",
+  "WorkroomAutonomy/Certificates.lean": "2039060afb8ac5b98054b35a7cef1f31d5958df1f514570f3be9495740a5753d",
+  "WorkroomAutonomy/Memory.lean": "a3dc30731768c9e2ba772d2f9f79ae85a77475d9d3d6048af7b792afa95533f2",
+  "WorkroomAutonomy/Promotion.lean": "1ac64eabfcc886613b6617d24d395b894ad3b0df34040125053d3d06413f99d4",
+  "WorkroomAutonomy/Session.lean": "b9ed8250ceeadc75b8034bb10fa7824fa1ea8a83de2b7d870017fa4ffd709fb7",
+  "WorkroomAutonomy/Tools.lean": "eb3f65d0e6c9af51865229c0b96e86bcb5143d6fe79deae81e1308918921bfc2",
+  "WorkroomAutonomy/Witnesses.lean": "fcd01883f01b71ec3e75632e413588535c8fcf46b339a26890daf591fa3eedfd",
+  "lake-manifest.json": "39b33e2d38d5a80c838912a9bb8a17431655831e1777f9e218901ae44132f9bd",
+  "lakefile.toml": "bc57e0dfe535c1df062721bc4d63e8340392a0f3085f892820167aec539799e9",
+  "lean-toolchain": "55e97be96000b5e9e290c9e74482e5e317861499a5540353ce845471bded8cea",
+  "scripts/verify.py": "a384d14f9eef1930f31f56b50698efccbd821281bdbb02a9b61ce5b3a9d9b29f"
+}

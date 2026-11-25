@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { estimateMicroUsd, promptTokenEstimate, reservationMicroUsd } from '../../src/or-harness/client.ts';
 import { nativeTaskDigest, type NativeBinding, type NativeDriverHook } from './native-contract.ts';
 import { NativeHold } from './native-execution.ts';
+import { harnessBindingSchema, harnessPrompt, HarnessHold, validateHarnessBytes,
+  type HarnessBinding, type HarnessDriverHook } from './harness-contract.ts';
 
 // Client limits are an extra bound. The authenticated server remains the only
 // task/lease/intent/cost/effect authority and independently checks its limits.
@@ -32,6 +34,7 @@ export interface DriverIO {
   now?(): number;
   uuid?(): string;
   native?: NativeDriverHook;
+  harness?: HarnessDriverHook;
 }
 export interface RunEnvelope {
   schema_version: '1'; project: string; task_id: string; run_id: string; attempt_id: string;
@@ -42,6 +45,7 @@ export interface Attempt {
   run_id: string; attempt_id: string; claim_key: string;
   started_at_ms?: number;
   native_binding?: NativeBinding;
+  harness_binding?: HarnessBinding;
   native_submission?: { schema_version: '1'; run_id: string; attempt_id: string; task_id: string;
     lease_epoch: number; intent_revision: number; cancel_generation: number; expected_version: number;
     idempotency_key: string; receipt_json: string };
@@ -76,6 +80,7 @@ const runEnvelopeSchema: z.ZodType<RunEnvelope> = z.object({
 const journalAttemptSchema: z.ZodType<Attempt> = z.object({
   run_id: journalId, attempt_id: journalId, claim_key: journalKey,
   started_at_ms: integer.optional(),
+  harness_binding: harnessBindingSchema.optional(),
   native_binding: z.object({ spec_sha256: journalDigest, task_spec_sha256: journalDigest, prompt: str,
     model: str.max(128), max_tokens: integer.min(1).max(1024), max_total_tokens: integer.positive().max(1000000),
     max_wall_ms: integer.positive().max(600000), max_micro_usd: integer }).strict().optional(),
@@ -180,6 +185,21 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
     if (active?.native_binding && !active.native_submission && (active.started_at_ms === undefined
       || now() >= active.started_at_ms + active.native_binding.max_wall_ms)) throw new DriverHold('native_wall_bound');
   };
+  // A selector may ignore AbortSignal. Bound waiting at the host as well. This
+  // does not terminate external work: hooks are advisory/read-only and cannot
+  // acquire an independent tool/provider execution path.
+  const harnessCall = async <T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    timeCheck();
+    let onAbort: () => void = () => undefined;
+    const stopped = new Promise<never>((_, reject) => {
+      onAbort = () => reject(new DriverHold('runtime_bound'));
+      control.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    try {
+      const value = await Promise.race([operation(control.signal), stopped]);
+      timeCheck(); return value;
+    } finally { control.signal.removeEventListener('abort', onAbort); }
+  };
   const request = async (method: 'GET' | 'POST', path: string, body?: unknown, key?: string, signal = control.signal) => {
     timeCheck();
     return data(await io.rest(method, path, body, { key, signal }));
@@ -266,6 +286,10 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
   const invoke = async (resume: boolean): Promise<Record<string, unknown>> => {
     const envelope = active!.envelope!;
     if (digest(JSON.stringify(envelope)) !== active!.envelope_sha256) throw new DriverHold('journal_envelope_mismatch');
+    if (active!.harness_binding) {
+      if (!io.harness || !journal) throw new DriverHold('harness_adapter_missing');
+      await harnessCall(signal => io.harness!.validate(active!.harness_binding!, active!.task!.task, journal!.principal_id, signal));
+    }
     active!.phase = 'sending';
     delete active!.hold_reason;
     await checkpoint(); // This durable write happens before any execution POST.
@@ -378,28 +402,50 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
         }));
         active.material = { intent, pinned_inputs: pinned, context: context.value, context_json: context.json, context_sha256: context.sha256 };
         await checkpoint();
+        if (io.harness) {
+          if (!active.harness_binding) active.harness_binding = validateHarnessBytes(await harnessCall(signal => io.harness!.prepare(active!.task!.task, journal!.principal_id, signal)));
+          await harnessCall(signal => io.harness!.validate(active!.harness_binding!, active!.task!.task, journal!.principal_id, signal));
+          await checkpoint(); timeCheck();
+        }
         if (io.native) {
           if (active.started_at_ms === undefined) throw new DriverHold('native_start_time_missing');
           active.native_binding = await io.native.prepare(active.task!.task, journal.principal_id);
           await checkpoint(); timeCheck();
         }
+        if (active.native_binding && active.harness_binding && active.native_binding.model !== active.harness_binding.model) {
+          throw new DriverHold('harness_native_model_mismatch');
+        }
+        if (active.harness_binding && options.project !== undefined && project !== active.harness_binding.project) {
+          throw new DriverHold('harness_project_mismatch');
+        }
         const prompt = assemblePrompt(active.task!, intent, pinned, context.value, maxPrompt)
+          + (active.harness_binding ? harnessPrompt(active.harness_binding) : '')
           + (active.native_binding ? '\nApproved native contract and frozen check instructions:\n' + active.native_binding.prompt : '');
         if (prompt.length > maxPrompt) throw new DriverHold('mandatory_prompt_exceeds_bound');
-        const tokens = Math.min(maxTokens, active.native_binding?.max_tokens ?? maxTokens,
+        const tokens = Math.min(maxTokens, active.native_binding?.max_tokens ?? maxTokens, active.harness_binding?.max_tokens ?? maxTokens,
           active.native_binding ? active.native_binding.max_total_tokens - promptTokenEstimate(prompt.length) : maxTokens);
         if (tokens < 1) throw new DriverHold('native_estimated_tokens_exceed_unit_budget');
         if (active.native_binding && reservationMicroUsd(estimateMicroUsd(active.native_binding.model, prompt.length, tokens))
           > active.native_binding.max_micro_usd) throw new DriverHold('native_reservation_exceeds_unit_budget');
-        active.envelope = { schema_version: '1', project, task_id: active.task!.task.id,
+        active.envelope = { schema_version: '1', project: active.harness_binding?.project ?? project, task_id: active.task!.task.id,
           run_id: active.run_id, attempt_id: active.attempt_id, lease_epoch: active.task!.lease.lease_epoch,
           intent_revision: intentRevision, cancel_generation: 0, prompt, max_tokens: tokens,
-          ...(active.native_binding ? { model: active.native_binding.model } : {}) };
+          ...(active.native_binding || active.harness_binding ? { model: (active.native_binding ?? active.harness_binding)!.model } : {}) };
         active.envelope_sha256 = digest(JSON.stringify(active.envelope)); active.phase = 'ready';
         await checkpoint();
       }
       if (digest(JSON.stringify(active.envelope)) !== active.envelope_sha256
         || !active.material || digest(active.material.context_json) !== active.material.context_sha256) throw new DriverHold('journal_material_mismatch');
+      if (active.harness_binding) {
+        if (!io.harness) throw new DriverHold('harness_adapter_missing');
+        const binding = validateHarnessBytes(active.harness_binding);
+        await harnessCall(signal => io.harness!.validate(binding, active!.task!.task, journal!.principal_id, signal));
+        if (active.envelope.project !== binding.project || (options.project !== undefined && project !== binding.project)) {
+          throw new DriverHold('harness_project_mismatch');
+        }
+        if (active.envelope.model !== binding.model || active.envelope.max_tokens > binding.max_tokens
+          || !active.envelope.prompt.includes(harnessPrompt(binding))) throw new DriverHold('harness_envelope_mismatch');
+      } else if (io.harness) throw new DriverHold('harness_envelope_missing');
       if (active.native_binding) {
         if (!io.native) throw new DriverHold('native_adapter_missing');
         const current = await io.native.prepare(active.task!.task, journal.principal_id);
@@ -515,7 +561,7 @@ export async function runDriver(options: DriverOptions, io: DriverIO): Promise<D
     }
     return { mode: 'executed', disposition: 'AWAITING_REVIEW', completed };
   } catch (e) {
-    const reason = e instanceof DriverHold || e instanceof NativeHold ? e.code : e instanceof z.ZodError ? 'invalid_server_response' : 'transport_or_storage_unavailable';
+    const reason = e instanceof DriverHold || e instanceof NativeHold || e instanceof HarnessHold ? e.code : e instanceof z.ZodError ? 'invalid_server_response' : 'transport_or_storage_unavailable';
     if (active && journal) { active.phase = 'held'; active.hold_reason = reason; await checkpoint().catch(() => undefined); }
     return { mode: 'executed', disposition: 'HOLD', completed, ...(active ? { run_id: active.run_id } : {}), reason };
   } finally { clearTimeout(deadlineTimer); clearTimeout(nativeTimer); control.abort(); }

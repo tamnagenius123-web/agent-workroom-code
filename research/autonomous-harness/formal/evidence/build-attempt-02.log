@@ -1,0 +1,57 @@
+ℹ [2/9] Replayed WorkroomAutonomy.Promotion
+info: ././././WorkroomAutonomy/Promotion.lean:99:0: 'WorkroomAutonomy.promotion_sound' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Promotion.lean:100:0: 'WorkroomAutonomy.mismatched_candidate_rejected' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Promotion.lean:101:0: 'WorkroomAutonomy.author_cannot_self_promote' depends on axioms: [propext, Quot.sound]
+ℹ [3/9] Replayed WorkroomAutonomy.Certificates
+info: ././././WorkroomAutonomy/Certificates.lean:73:0: 'WorkroomAutonomy.potential_bound' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Certificates.lean:74:0: 'WorkroomAutonomy.certified_shortest_path' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Certificates.lean:75:0: 'WorkroomAutonomy.closed_cut_contains_path' does not depend on any axioms
+info: ././././WorkroomAutonomy/Certificates.lean:76:0: 'WorkroomAutonomy.certified_unreachable' does not depend on any axioms
+info: ././././WorkroomAutonomy/Certificates.lean:77:0: 'WorkroomAutonomy.cumulative_improvement' depends on axioms: [propext, Quot.sound]
+ℹ [4/9] Built WorkroomAutonomy.Tools
+info: ././././WorkroomAutonomy/Tools.lean:50:0: 'WorkroomAutonomy.allows_composition' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Tools.lean:51:0: 'WorkroomAutonomy.tool_semantic_composition' does not depend on any axioms
+info: ././././WorkroomAutonomy/Tools.lean:52:0: 'WorkroomAutonomy.tool_capability_composition' depends on axioms: [propext]
+ℹ [5/9] Built WorkroomAutonomy.Memory
+info: ././././WorkroomAutonomy/Memory.lean:57:0: 'WorkroomAutonomy.retrieval_sound' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Memory.lean:58:0: 'WorkroomAutonomy.retrieval_never_sealed' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Memory.lean:59:0: 'WorkroomAutonomy.retrieval_current_tool' depends on axioms: [propext]
+ℹ [6/9] Built WorkroomAutonomy.Session
+info: ././././WorkroomAutonomy/Session.lean:163:0: 'WorkroomAutonomy.reserve_preserves' does not depend on any axioms
+info: ././././WorkroomAutonomy/Session.lean:164:0: 'WorkroomAutonomy.step_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:165:0: 'WorkroomAutonomy.continuation_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:166:0: 'WorkroomAutonomy.stale_checkpoint_rejected' does not depend on any axioms
+info: ././././WorkroomAutonomy/Session.lean:167:0: 'WorkroomAutonomy.no_global_fuel_refill' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:168:0: 'WorkroomAutonomy.unknown_never_reissued' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Session.lean:169:0: 'WorkroomAutonomy.takeover_preserves_identity' does not depend on any axioms
+✖ [7/9] Building WorkroomAutonomy.Witnesses
+trace: .> LEAN_PATH=././.lake/build/lib/lean /workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lean ././././WorkroomAutonomy/Witnesses.lean -R ./././. -o ././.lake/build/lib/lean/WorkroomAutonomy/Witnesses.olean -i ././.lake/build/lib/lean/WorkroomAutonomy/Witnesses.ilean -c ././.lake/build/ir/WorkroomAutonomy/Witnesses.c --json
+error: ././././WorkroomAutonomy/Witnesses.lean:14:44: failed to synthesize
+  Decidable session.Valid
+
+Additional diagnostic information may be available using the `set_option diagnostics true` command.
+error: ././././WorkroomAutonomy/Witnesses.lean:18:57: unexpected identifier; expected '}'
+error: ././././WorkroomAutonomy/Witnesses.lean:153:26: invalid constructor ⟨...⟩, expected type must be an inductive type
+  ?m.2390
+error: ././././WorkroomAutonomy/Witnesses.lean:154:31: invalid constructor ⟨...⟩, expected type must be an inductive type
+  ?m.2415
+error: ././././WorkroomAutonomy/Witnesses.lean:169:65: failed to synthesize
+  Decidable (cut 0)
+
+Additional diagnostic information may be available using the `set_option diagnostics true` command.
+error: ././././WorkroomAutonomy/Witnesses.lean:169:77: failed to synthesize
+  Decidable ¬cut 2
+
+Additional diagnostic information may be available using the `set_option diagnostics true` command.
+info: ././././WorkroomAutonomy/Witnesses.lean:183:0: 'WorkroomAutonomy.Witnesses.continuation_positive' depends on axioms: [sorryAx]
+info: ././././WorkroomAutonomy/Witnesses.lean:184:0: 'WorkroomAutonomy.Witnesses.refilling_loses_history' does not depend on any axioms
+info: ././././WorkroomAutonomy/Witnesses.lean:185:0: 'WorkroomAutonomy.Witnesses.resetting_unknown_enables_duplicate' does not depend on any axioms
+info: ././././WorkroomAutonomy/Witnesses.lean:186:0: 'WorkroomAutonomy.Witnesses.relevance_only_leaks' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Witnesses.lean:187:0: 'WorkroomAutonomy.Witnesses.pass_label_is_insufficient' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Witnesses.lean:188:0: 'WorkroomAutonomy.Witnesses.graph_optimal' depends on axioms: [propext, sorryAx, Quot.sound]
+info: ././././WorkroomAutonomy/Witnesses.lean:189:0: 'WorkroomAutonomy.Witnesses.unreachable_positive' depends on axioms: [sorryAx]
+info: ././././WorkroomAutonomy/Witnesses.lean:190:0: 'WorkroomAutonomy.Witnesses.development_gain_is_not_true_gain' does not depend on any axioms
+error: Lean exited with code 1
+Some required builds logged failures:
+- WorkroomAutonomy.Witnesses
+error: build failed

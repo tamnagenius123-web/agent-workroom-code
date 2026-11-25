@@ -1,0 +1,17 @@
+{
+  "source_path": "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/procedural_memory.py",
+  "source_sha256": "e4589f0066e7b3e2ac6b603a3f2bd6ba522cc3e86cdf2ebe35141aa7fc4cb9ad",
+  "scope": "read-only source; private in-memory SQLite; no shared source/db mutations",
+  "findings": [
+    {
+      "id": "known_revoked_outcome_evidence",
+      "rejected": true,
+      "recorded_usage": []
+    },
+    {
+      "id": "out_of_order_validation",
+      "rejected": true,
+      "retrieved_after_later_failure": false
+    }
+  ]
+}

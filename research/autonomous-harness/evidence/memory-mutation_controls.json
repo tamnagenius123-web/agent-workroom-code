@@ -1,0 +1,46 @@
+{
+  "original_source_sha256": "e4589f0066e7b3e2ac6b603a3f2bd6ba522cc3e86cdf2ebe35141aa7fc4cb9ad",
+  "controls": [
+    {
+      "name": "missing_project_family_filter",
+      "target_test": "test_project_and_task_family_are_hard_filters",
+      "mutant_sha256": "cc759bc4b6fbf0d85626b4d5c593d65dc03869101fbf1924af470816825a8965",
+      "exit_code": 1,
+      "expected_red_observed": true,
+      "before": "if (spec.project, spec.task_family) != (ctx.project, ctx.task_family):",
+      "after": "if False:  # deliberate mutant: no scope check",
+      "output": "test_project_and_task_family_are_hard_filters (test_procedural_memory.MemoryTests.test_project_and_task_family_are_hard_filters) ... FAIL\n\n======================================================================\nFAIL: test_project_and_task_family_are_hard_filters (test_procedural_memory.MemoryTests.test_project_and_task_family_are_hard_filters)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/tmp9i7o39ql/test_procedural_memory.py\", line 89, in test_project_and_task_family_are_hard_filters\n    self.assertEqual((), result.hits)\nAssertionError: Tuples differ: () != (RetrievalHit(procedure_id='procedure-a', [619 chars]')),)\n\nSecond tuple contains 1 additional elements.\nFirst extra element 0:\nRetrievalHit(procedure_id='procedure-a', procedure_digest='4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e', validation_id=1, relevance=0.2857142857142857, selection_score=0.2857142857142857, snippet='{\"description\":\"Inspect schema before read rows\",\"goal\":\"inventory total\",\"procedure_digest\":\"4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e\",\"procedure_id\":\"procedure-a\",\"source_episode_ids\":[\"episode-a\"],\"steps\":[\"describe\",\"read\",\"total\"],\"tools\":[{\"name\":\"inventory\",\"schema_digest\":\"d874acb886fd7721e159008c2695d548f54535da3b02250059d972ac1fa11a64\",\"version\":\"1\"}],\"validation_id\":1}', steps=('describe', 'read', 'total'))\n\nDiff is 824 characters long. Set self.maxDiff to None to see it.\n\n----------------------------------------------------------------------\nRan 1 test in 0.003s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "missing_tool_binding_filter",
+      "target_test": "test_tool_schema_and_version_are_hard_filters",
+      "mutant_sha256": "5dfd8a86b4c35ce276390a38c4253ad2be425fa16205037344d858f313d4b148",
+      "exit_code": 1,
+      "expected_red_observed": true,
+      "before": "if any(available.get(t.name) != t for t in spec.tools):",
+      "after": "if False:  # deliberate mutant: no exact tool binding check",
+      "output": "test_tool_schema_and_version_are_hard_filters (test_procedural_memory.MemoryTests.test_tool_schema_and_version_are_hard_filters) ... FAIL\n\n======================================================================\nFAIL: test_tool_schema_and_version_are_hard_filters (test_procedural_memory.MemoryTests.test_tool_schema_and_version_are_hard_filters)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/tmp15la8e8l/test_procedural_memory.py\", line 96, in test_tool_schema_and_version_are_hard_filters\n    self.assertEqual((), result.hits)\nAssertionError: Tuples differ: () != (RetrievalHit(procedure_id='procedure-a', [619 chars]')),)\n\nSecond tuple contains 1 additional elements.\nFirst extra element 0:\nRetrievalHit(procedure_id='procedure-a', procedure_digest='4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e', validation_id=1, relevance=0.2857142857142857, selection_score=0.2857142857142857, snippet='{\"description\":\"Inspect schema before read rows\",\"goal\":\"inventory total\",\"procedure_digest\":\"4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e\",\"procedure_id\":\"procedure-a\",\"source_episode_ids\":[\"episode-a\"],\"steps\":[\"describe\",\"read\",\"total\"],\"tools\":[{\"name\":\"inventory\",\"schema_digest\":\"d874acb886fd7721e159008c2695d548f54535da3b02250059d972ac1fa11a64\",\"version\":\"1\"}],\"validation_id\":1}', steps=('describe', 'read', 'total'))\n\nDiff is 824 characters long. Set self.maxDiff to None to see it.\n\n----------------------------------------------------------------------\nRan 1 test in 0.003s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "missing_validation_time_filter",
+      "target_test": "test_expired_and_future_validation_are_excluded",
+      "mutant_sha256": "45c33d72cbe3f4a9450044340bbf4db476153419b57bdb9b73f3377d70e01f68",
+      "exit_code": 1,
+      "expected_red_observed": true,
+      "before": "if not validation[\"checked_at\"] <= ctx.now < validation[\"expires_at\"]:",
+      "after": "if False:  # deliberate mutant: expired validation is usable",
+      "output": "test_expired_and_future_validation_are_excluded (test_procedural_memory.MemoryTests.test_expired_and_future_validation_are_excluded) ... FAIL\n\n======================================================================\nFAIL: test_expired_and_future_validation_are_excluded (test_procedural_memory.MemoryTests.test_expired_and_future_validation_are_excluded)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/tmpamm40ot1/test_procedural_memory.py\", line 111, in test_expired_and_future_validation_are_excluded\n    self.assertEqual((), result.hits)\nAssertionError: Tuples differ: () != (RetrievalHit(procedure_id='procedure-a', [619 chars]')),)\n\nSecond tuple contains 1 additional elements.\nFirst extra element 0:\nRetrievalHit(procedure_id='procedure-a', procedure_digest='4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e', validation_id=1, relevance=0.2857142857142857, selection_score=0.2857142857142857, snippet='{\"description\":\"Inspect schema before read rows\",\"goal\":\"inventory total\",\"procedure_digest\":\"4f32120164d1ea7353d1b4aa5babb40f89c8b411377befcbd03609994062008e\",\"procedure_id\":\"procedure-a\",\"source_episode_ids\":[\"episode-a\"],\"steps\":[\"describe\",\"read\",\"total\"],\"tools\":[{\"name\":\"inventory\",\"schema_digest\":\"d874acb886fd7721e159008c2695d548f54535da3b02250059d972ac1fa11a64\",\"version\":\"1\"}],\"validation_id\":1}', steps=('describe', 'read', 'total'))\n\nDiff is 824 characters long. Set self.maxDiff to None to see it.\n\n----------------------------------------------------------------------\nRan 1 test in 0.003s\n\nFAILED (failures=1)\n"
+    },
+    {
+      "name": "missing_context_budget_filter",
+      "target_test": "test_exact_utf8_budget_includes_complete_rendered_context",
+      "mutant_sha256": "74b4db31839d64e92f5db660ffc0d39aa53d733d863a08af1d4293706ad9b54f",
+      "exit_code": 1,
+      "expected_red_observed": true,
+      "before": "if len(proposed_text.encode(\"utf-8\")) > context.max_context_bytes:",
+      "after": "if False:  # deliberate mutant: context overflow allowed",
+      "output": "test_exact_utf8_budget_includes_complete_rendered_context (test_procedural_memory.MemoryTests.test_exact_utf8_budget_includes_complete_rendered_context) ... FAIL\n\n======================================================================\nFAIL: test_exact_utf8_budget_includes_complete_rendered_context (test_procedural_memory.MemoryTests.test_exact_utf8_budget_includes_complete_rendered_context)\n----------------------------------------------------------------------\nTraceback (most recent call last):\n  File \"/tmp/tmp25ngcyff/test_procedural_memory.py\", line 189, in test_exact_utf8_budget_includes_complete_rendered_context\n    self.assertEqual((), result.hits)\nAssertionError: Tuples differ: () != (RetrievalHit(procedure_id='procedure-a', [622 chars]')),)\n\nSecond tuple contains 1 additional elements.\nFirst extra element 0:\nRetrievalHit(procedure_id='procedure-a', procedure_digest='3d15f3c35429f02f0ae1028d9d817e10217d9f1f7685db5d9b554430a45e088e', validation_id=1, relevance=0.2857142857142857, selection_score=0.2857142857142857, snippet='{\"description\":\"스키마를 먼저 확인하고 inventory total을 계산한다\",\"goal\":\"inventory total\",\"procedure_digest\":\"3d15f3c35429f02f0ae1028d9d817e10217d9f1f7685db5d9b554430a45e088e\",\"procedure_id\":\"procedure-a\",\"source_episode_ids\":[\"episode-a\"],\"steps\":[\"describe\",\"read\",\"total\"],\"tools\":[{\"name\":\"inventory\",\"schema_digest\":\"d874acb886fd7721e159008c2695d548f54535da3b02250059d972ac1fa11a64\",\"version\":\"1\"}],\"validation_id\":1}', steps=('describe', 'read', 'total'))\n\nDiff is 827 characters long. Set self.maxDiff to None to see it.\n\n----------------------------------------------------------------------\nRan 1 test in 0.003s\n\nFAILED (failures=1)\n"
+    }
+  ],
+  "all_mutants_killed": true
+}
