@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite-*
+formal/.lake/
+formal/lean-4.19.0-linux/
+formal/*.tar.zst
+!evidence/*.log
+!formal/evidence/*.log

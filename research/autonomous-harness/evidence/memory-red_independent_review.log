@@ -1,0 +1,75 @@
+test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) ...
+  test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='success') ... FAIL
+  test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='failure') ... FAIL
+  test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='unknown') ... FAIL
+test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) ... FAIL
+test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) ...
+  test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) (old_time=4) ... FAIL
+  test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) (old_time=20) ... FAIL
+test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) ... FAIL
+
+======================================================================
+FAIL: test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='success')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 263, in test_known_revoked_outcome_evidence_cannot_label_use
+    with self.subTest(outcome=outcome), self.assertRaises(MemoryContractError):
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+======================================================================
+FAIL: test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='failure')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 263, in test_known_revoked_outcome_evidence_cannot_label_use
+    with self.subTest(outcome=outcome), self.assertRaises(MemoryContractError):
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+======================================================================
+FAIL: test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use) (outcome='unknown')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 263, in test_known_revoked_outcome_evidence_cannot_label_use
+    with self.subTest(outcome=outcome), self.assertRaises(MemoryContractError):
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+======================================================================
+FAIL: test_known_revoked_outcome_evidence_cannot_label_use (test_procedural_memory.MemoryTests.test_known_revoked_outcome_evidence_cannot_label_use)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 267, in test_known_revoked_outcome_evidence_cannot_label_use
+    self.assertEqual(0, self.store.audit_counts()["uses"])
+AssertionError: 0 != 3
+
+======================================================================
+FAIL: test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) (old_time=4)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 276, in test_delayed_or_tied_validation_cannot_override_newer_failure
+    with self.subTest(old_time=old_time), self.assertRaises(MemoryContractError):
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+======================================================================
+FAIL: test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure) (old_time=20)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 276, in test_delayed_or_tied_validation_cannot_override_newer_failure
+    with self.subTest(old_time=old_time), self.assertRaises(MemoryContractError):
+                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+======================================================================
+FAIL: test_delayed_or_tied_validation_cannot_override_newer_failure (test_procedural_memory.MemoryTests.test_delayed_or_tied_validation_cannot_override_newer_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 279, in test_delayed_or_tied_validation_cannot_override_newer_failure
+    self.assertEqual(2, self.store.audit_counts()["validations"])
+AssertionError: 2 != 4
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.005s
+
+FAILED (failures=7)

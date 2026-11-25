@@ -1,0 +1,3 @@
+'WorkroomAutonomy.allows_composition' depends on axioms: [propext]
+'WorkroomAutonomy.tool_semantic_composition' does not depend on any axioms
+'WorkroomAutonomy.tool_capability_composition' depends on axioms: [propext]

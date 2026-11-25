@@ -1,0 +1,29 @@
+{
+  "source_path": "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/procedural_memory.py",
+  "source_sha256": "83ea465a5f0ceda97033a3abe7990a26cfb74ecbe0ac3f214406d8cd3057a6b8",
+  "scope": "read-only source; private in-memory SQLite; no shared source/db mutations",
+  "findings": [
+    {
+      "id": "known_revoked_outcome_evidence",
+      "rejected": false,
+      "recorded_usage": [
+        {
+          "causal_claim": false,
+          "consumed": true,
+          "decision_changed": true,
+          "observed_at": 11,
+          "outcome": "success",
+          "outcome_evidence_digest": "faca9c38f0f94564d5fd9102a3cb80124eb675c4246735bea65f2180bd736ff4",
+          "procedure_digest": "cde10657019487ab67bc910ce5607d23cdc876c840687c4d379e6674a285e34e",
+          "run_id": "new-run",
+          "validation_id": 1
+        }
+      ]
+    },
+    {
+      "id": "out_of_order_validation",
+      "rejected": false,
+      "retrieved_after_later_failure": true
+    }
+  ]
+}

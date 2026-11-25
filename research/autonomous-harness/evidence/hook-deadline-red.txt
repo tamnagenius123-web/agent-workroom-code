@@ -1,0 +1,31 @@
+✔ driver invokes optional harness admission before any model dispatch (8.059511ms)
+✔ actual runDriver pins approved model, bundle and memory before existing dispatch and submission (15.681221ms)
+✔ harness rejects model outside host admission before dispatch (1.724877ms)
+✔ harness rejects bundle outside host admission before dispatch (1.710736ms)
+✔ harness rejects project outside host admission before dispatch (1.463547ms)
+✔ harness rejects family outside host admission before dispatch (1.517389ms)
+✔ harness rejects shared outside host admission before dispatch (1.744198ms)
+✔ harness rejects bytes outside host admission before dispatch (1.575438ms)
+✔ saved run keeps its exact memory and bundle after backpressure; selector is not rerun (19.108181ms)
+✔ changed admission and tampered memory fail closed on a saved pin (1.398506ms)
+✔ binding cannot be applied to a changed task specification or another principal (0.28718ms)
+✔ explicit driver billing project cannot differ from the admitted project (1.356092ms)
+✔ native and harness model contracts must agree (1.295759ms)
+✖ noncooperative harness selection cannot outlive the driver deadline (251.288872ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 13
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 875.806473
+
+✖ failing tests:
+
+test at tests/harness-control.test.ts:1:8966
+✖ noncooperative harness selection cannot outlive the driver deadline (251.288872ms)
+  Error: WATCHDOG_EXCEEDED
+      at Timeout.<anonymous> (/workspace/scratch/d62e0f565d0c/implementation/workroom-code/tests/harness-control.test.ts:177:88)
+      at listOnTimeout (node:internal/timers:685:17)
+      at process.processTimers (node:internal/timers:618:7)

@@ -1,0 +1,172 @@
+{
+  "experiment": "scripted_schema_protocol_transfer",
+  "provider_calls": 0,
+  "source_task": {
+    "task_id": "task-a",
+    "tool_calls": 5
+  },
+  "consolidated_steps": [
+    "describe",
+    "read",
+    "aggregate",
+    "verify"
+  ],
+  "validation_task": "validation-c",
+  "validation_success": true,
+  "task_b_results": [
+    {
+      "task_id": "task-b-0",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 1,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    },
+    {
+      "task_id": "task-b-1",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 2,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    },
+    {
+      "task_id": "task-b-2",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 3,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    },
+    {
+      "task_id": "task-b-3",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 4,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    },
+    {
+      "task_id": "task-b-4",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 5,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    },
+    {
+      "task_id": "task-b-5",
+      "no_memory": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 0
+      },
+      "irrelevant_equal_bytes": {
+        "success": true,
+        "tool_calls": 5,
+        "context_bytes": 497
+      },
+      "validated_procedure": {
+        "success": true,
+        "tool_calls": 4,
+        "context_bytes": 497
+      },
+      "same_output": true,
+      "retrieval_id": 6,
+      "procedure_digest": "a3ed9c435229951099f8bd3aeaa8e8a24869c31785c9bab651bc80ed5c01c042"
+    }
+  ],
+  "aggregate": {
+    "tasks_per_arm": 6,
+    "successes_per_arm": {
+      "no_memory": 6,
+      "irrelevant_equal_bytes": 6,
+      "validated_procedure": 6
+    },
+    "total_tool_calls": {
+      "no_memory": 30,
+      "irrelevant_equal_bytes": 30,
+      "validated_procedure": 24
+    }
+  },
+  "receipt_counts": {
+    "episodes": 1,
+    "procedures": 1,
+    "validations": 1,
+    "retrievals": 6,
+    "uses": 6,
+    "events": 3
+  },
+  "limits": [
+    "Scripted policy and synthetic API; no LLM capability claim.",
+    "Six deterministic tasks are a mechanism test, not statistical evidence of generalization.",
+    "Byte-matched irrelevant context is inert to the scripted policy.",
+    "Task A and validation cost are additional; break-even depends on future reuse.",
+    "Evidence digests are receipts; trusted integration must verify bytes and evaluator identity."
+  ]
+}

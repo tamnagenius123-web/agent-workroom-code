@@ -1,0 +1,15 @@
+test_revalidation_requires_fresh_retrieval_binding (test_procedural_memory.MemoryTests.test_revalidation_requires_fresh_retrieval_binding) ... FAIL
+
+======================================================================
+FAIL: test_revalidation_requires_fresh_retrieval_binding (test_procedural_memory.MemoryTests.test_revalidation_requires_fresh_retrieval_binding)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/memory_lane/test_procedural_memory.py", line 249, in test_revalidation_requires_fresh_retrieval_binding
+    with self.assertRaises(MemoryContractError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: MemoryContractError not raised
+
+----------------------------------------------------------------------
+Ran 1 test in 0.003s
+
+FAILED (failures=1)

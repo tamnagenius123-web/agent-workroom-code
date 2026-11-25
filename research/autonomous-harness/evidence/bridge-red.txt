@@ -1,0 +1,28 @@
+✖ driver invokes optional harness admission before any model dispatch (11.235421ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 590.560388
+
+✖ failing tests:
+
+test at tests/harness-control.test.ts:1:2881
+✖ driver invokes optional harness admission before any model dispatch (11.235421ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  0 !== 1
+
+      at TestContext.<anonymous> (/workspace/scratch/d62e0f565d0c/implementation/workroom-code/tests/harness-control.test.ts:64:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

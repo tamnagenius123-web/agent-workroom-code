@@ -1,0 +1,31 @@
+{
+  "reviewed_sha256": "39da5f07b87bacc0d364c0e1e573a3e9c2ce38af1df1de8007310b2471037e06",
+  "checks": [
+    {
+      "case": "correct_plan",
+      "status": "verified",
+      "reason": "optimal shortest path verified"
+    },
+    {
+      "case": "forged_id",
+      "status": "rejected",
+      "reason": "plan digest changed since compilation"
+    },
+    {
+      "case": "provenance_changed",
+      "status": "rejected",
+      "reason": "plan digest changed since compilation"
+    },
+    {
+      "case": "metadata_changed",
+      "status": "rejected",
+      "reason": "plan digest changed since compilation"
+    },
+    {
+      "case": "missing_id",
+      "status": "rejected",
+      "reason": "plan digest changed since compilation"
+    }
+  ],
+  "closed": true
+}

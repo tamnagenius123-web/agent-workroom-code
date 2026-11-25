@@ -1,0 +1,61 @@
+{
+  "schema_version": "1",
+  "base_commit": "14ec58e854b6705498d233e796b4e243605b2dd5",
+  "scope": "local prototype verification, synthetic provider-free execution",
+  "python_tests": 84,
+  "driver_tests": 36,
+  "formal_theorem_declarations": 62,
+  "formal_obligation_groups": 16,
+  "memory_mutants_detected": 4,
+  "solver_mutants_detected": 2,
+  "commands": [
+    {
+      "command": "python -B -m unittest discover -v",
+      "exit_code": 0,
+      "log": "evidence/python-tests.txt"
+    },
+    {
+      "command": "node --import tsx --test tests/harness-control.test.ts tests/orch-driver.test.ts",
+      "exit_code": 0,
+      "log": "evidence/bridge-green.txt"
+    },
+    {
+      "command": "node node_modules/typescript/bin/tsc -b",
+      "exit_code": 0
+    },
+    {
+      "command": "node node_modules/eslint/bin/eslint.js scripts/orch/harness-contract.ts scripts/orch/driver.ts tests/harness-control.test.ts",
+      "exit_code": 0
+    },
+    {
+      "command": "node scripts/build.mjs",
+      "exit_code": 0
+    }
+  ],
+  "source_sha256": {
+    "scripts/orch/driver.ts": "4b2e5de72243929b3436208616d7eea1c04b754b2b76d864fdce378161796aee",
+    "scripts/orch/harness-contract.ts": "a1589b963ade445353d02590f486ab2930fda3dc4ff8cfde4519dbe398aaf5cd",
+    "tests/harness-control.test.ts": "9000abb9d3efd17b3b5d071f605c88fb1e7fba00c64960608b24042df175a0fe",
+    "research/autonomous-harness/procedural_memory.py": "e4589f0066e7b3e2ac6b603a3f2bd6ba522cc3e86cdf2ebe35141aa7fc4cb9ad",
+    "research/autonomous-harness/end_to_end.py": "9cb52d3282d57bfae8b3c01f8b77126d4d1df74c688aa94cfc70a38d872a3677",
+    "research/autonomous-harness/rsi_campaign.py": "5bccc159e8e6f2ef3bba3ab41249342461362e4fead2297e05d92fc125d9aa0a",
+    "research/autonomous-harness/session_runtime.py": "6e87f5df53f6dae85793fe1a23b1cfd6f9522b33efbbaf51525c87eb7cc4acd5",
+    "research/autonomous-harness/test_procedural_memory.py": "23e14db67192fb80a0351fc98b62bf18719f2aa7db9882415a6b0b6a6f83bd6e",
+    "research/autonomous-harness/validate.py": "b168bd13782d9d034052b7d8cdb2baa28c89b04836c54d5cb928be822c30bef3",
+    "research/autonomous-harness/model_tools.py": "39da5f07b87bacc0d364c0e1e573a3e9c2ce38af1df1de8007310b2471037e06",
+    "research/autonomous-harness/demo_transfer.py": "1f8e5d17239a1ba1e6079e29d242e5f8d0ad31bb2a16c390bf1cc2e61ebb613e",
+    "research/autonomous-harness/test_session_runtime.py": "6522f9516d55e4f6991e365890843249543b4fcc8624ac9630289898f93bdb1a",
+    "research/autonomous-harness/run_mutation_controls.py": "c2597cf768f5d6c729bfa750c5a58c359003f3fb0dbbe777a24315fd6c14c632",
+    "research/autonomous-harness/test_transfer.py": "4eb4fd619398163fb14dbf91a3d882b1c86dec72d28b1b86921faea05eba0948",
+    "research/autonomous-harness/test_model_tools.py": "2e01ac285c5b00d50ced0da80bc2680fdad3cc193990ff00bfe8cbdbadbc83d6",
+    "research/autonomous-harness/test_end_to_end.py": "8ffde86ef742d3aa0094b85710648cc1d38ed19c0f558b5ce793c491e67ba3cd",
+    "research/autonomous-harness/test_rsi_campaign.py": "89a482bd8b855a0795c440c48d3f3da2e8b24c28256a945339aaa1a4876d128e"
+  },
+  "provider_calls": 0,
+  "gpu_jobs": 0,
+  "production_deployment": false,
+  "production_refinement": "OPEN",
+  "real_project_performance": "NOT_MEASURED",
+  "learned_improver_gain": "NOT_MEASURED",
+  "formal_receipt_sha256": "767a4857d440d0916570d1ac96c004e129eaa0e99a6518b7cfb2b42355867f15"
+}

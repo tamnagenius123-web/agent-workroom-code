@@ -1,0 +1,10 @@
+'WorkroomAutonomy.reserve_preserves' does not depend on any axioms
+'WorkroomAutonomy.step_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.continuation_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.stale_checkpoint_rejected' does not depend on any axioms
+'WorkroomAutonomy.no_global_fuel_refill' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.progress_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.trace_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.trace_length_bounded' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.unknown_never_reissued' depends on axioms: [propext]
+'WorkroomAutonomy.takeover_preserves_identity' does not depend on any axioms

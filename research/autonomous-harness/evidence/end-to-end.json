@@ -1,0 +1,67 @@
+{
+  "experiment": "local_tool_memory_continuation_vertical_slice",
+  "provider_calls": 0,
+  "gpu_jobs": 0,
+  "source_task_verified": true,
+  "validation_verified": true,
+  "retrieval": {
+    "context_digest": "bd75c15bab9786fdd04f5c0a7ad371165191f6c57682d96a7fc764155fc4247a",
+    "snapshot_digest": "e6301e10daabb7d728ed8589f383d7dc5c3994a6d670d2696916668d42be3a6d",
+    "context_bytes": 497,
+    "selected": [
+      {
+        "procedure_id": "unit-graph-v1",
+        "procedure_digest": "031dfe293492176fa79f411e2d0f0d679a878d054aa9a4829ce106c1c92335b3",
+        "validation_id": 1,
+        "relevance": 0.23076923076923078,
+        "selection_score": 0.23076923076923078,
+        "snippet": "{\"description\":\"Try BFS for unit-weight graphs; recheck eligibility and fall back on weighted graphs.\",\"goal\":\"verified shortest path\",\"procedure_digest\":\"031dfe293492176fa79f411e2d0f0d679a878d054aa9a4829ce106c1c92335b3\",\"procedure_id\":\"unit-graph-v1\",\"source_episode_ids\":[\"episode-a\"],\"steps\":[\"preferred_algorithm:bfs\",\"verify:certificate\"],\"tools\":[{\"name\":\"graph.specialist\",\"schema_digest\":\"719412093bf3afbb21f74af7aa9046c8ce46be79a8fde58f1e2c947d147cda46\",\"version\":\"1\"}],\"validation_id\":1}",
+        "steps": [
+          "preferred_algorithm:bfs",
+          "verify:certificate"
+        ]
+      }
+    ]
+  },
+  "task_b": {
+    "verified_subgoals": 2,
+    "subgoals": 2,
+    "first_algorithm": "bfs",
+    "second_algorithm": "dijkstra",
+    "second_hint_rejected": true,
+    "strong_baseline_same_first_choice": true,
+    "run_count": 2,
+    "effect_count": 2,
+    "continuation_replay": {
+      "run_id": "run-b2",
+      "replayed": true
+    },
+    "stale_predecessor_rejected": true,
+    "before_continuation": {
+      "fuel": 4,
+      "spent_units": 10000,
+      "deadline": 10000
+    },
+    "after": {
+      "fuel": 2,
+      "spent_units": 20000,
+      "deadline": 10000,
+      "epoch": 2
+    }
+  },
+  "memory_receipts": {
+    "episodes": 1,
+    "procedures": 1,
+    "validations": 1,
+    "retrievals": 1,
+    "uses": 1,
+    "events": 3
+  },
+  "limits": [
+    "Synthetic reference runtime; no remote Workroom mutation or production adapter claim.",
+    "Two verified subgoals do not independently validate a general task-completion judge.",
+    "Memory is consumed but does not improve on the strong rule compiler in this example.",
+    "Synthetic reserved work units are not measured USD, CPU time or energy.",
+    "SQLite resume is a local shared-ledger property, not a multi-host consensus result."
+  ]
+}

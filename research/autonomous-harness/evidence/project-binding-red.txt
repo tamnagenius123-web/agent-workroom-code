@@ -1,0 +1,61 @@
+✔ driver invokes optional harness admission before any model dispatch (6.868869ms)
+✖ actual runDriver pins approved model, bundle and memory before existing dispatch and submission (16.065877ms)
+✔ harness rejects model outside host admission before dispatch (2.012611ms)
+✔ harness rejects bundle outside host admission before dispatch (1.6545ms)
+✔ harness rejects project outside host admission before dispatch (1.559176ms)
+✔ harness rejects family outside host admission before dispatch (1.544173ms)
+✔ harness rejects shared outside host admission before dispatch (1.752918ms)
+✔ harness rejects bytes outside host admission before dispatch (1.541609ms)
+✔ saved run keeps its exact memory and bundle after backpressure; selector is not rerun (19.232391ms)
+✔ changed admission and tampered memory fail closed on a saved pin (1.788102ms)
+✔ binding cannot be applied to a changed task specification or another principal (0.339303ms)
+✖ explicit driver billing project cannot differ from the admitted project (3.406367ms)
+✔ native and harness model contracts must agree (1.328417ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 11
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 623.471276
+
+✖ failing tests:
+
+test at tests/harness-control.test.ts:1:4258
+✖ actual runDriver pins approved model, bundle and memory before existing dispatch and submission (16.065877ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + 'orchestrator'
+  - 'workroom'
+
+      at TestContext.<anonymous> (/workspace/scratch/d62e0f565d0c/implementation/workroom-code/tests/harness-control.test.ts:91:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'orchestrator',
+    expected: 'workroom',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/harness-control.test.ts:1:7915
+✖ explicit driver billing project cannot differ from the admitted project (3.406367ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+
+  + undefined
+  - 'harness_project_mismatch'
+
+      at TestContext.<anonymous> (/workspace/scratch/d62e0f565d0c/implementation/workroom-code/tests/harness-control.test.ts:157:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'harness_project_mismatch',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,41 @@
+ℹ [2/9] Replayed WorkroomAutonomy.Tools
+info: ././././WorkroomAutonomy/Tools.lean:50:0: 'WorkroomAutonomy.allows_composition' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Tools.lean:51:0: 'WorkroomAutonomy.tool_semantic_composition' does not depend on any axioms
+info: ././././WorkroomAutonomy/Tools.lean:52:0: 'WorkroomAutonomy.tool_capability_composition' depends on axioms: [propext]
+ℹ [3/9] Replayed WorkroomAutonomy.Memory
+info: ././././WorkroomAutonomy/Memory.lean:72:0: 'WorkroomAutonomy.retrieval_sound' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Memory.lean:73:0: 'WorkroomAutonomy.retrieval_never_sealed' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Memory.lean:74:0: 'WorkroomAutonomy.retrieval_compatible_tool' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Memory.lean:75:0: 'WorkroomAutonomy.retrieval_provenance_scope' depends on axioms: [propext, Quot.sound]
+ℹ [4/9] Replayed WorkroomAutonomy.Promotion
+info: ././././WorkroomAutonomy/Promotion.lean:99:0: 'WorkroomAutonomy.promotion_sound' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Promotion.lean:100:0: 'WorkroomAutonomy.mismatched_candidate_rejected' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Promotion.lean:101:0: 'WorkroomAutonomy.author_cannot_self_promote' depends on axioms: [propext, Quot.sound]
+ℹ [5/9] Replayed WorkroomAutonomy.Certificates
+info: ././././WorkroomAutonomy/Certificates.lean:75:0: 'WorkroomAutonomy.potential_bound' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Certificates.lean:76:0: 'WorkroomAutonomy.certified_shortest_path' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Certificates.lean:77:0: 'WorkroomAutonomy.closed_cut_contains_path' does not depend on any axioms
+info: ././././WorkroomAutonomy/Certificates.lean:78:0: 'WorkroomAutonomy.certified_unreachable' does not depend on any axioms
+info: ././././WorkroomAutonomy/Certificates.lean:79:0: 'WorkroomAutonomy.cumulative_improvement' depends on axioms: [propext, Quot.sound]
+ℹ [6/9] Built WorkroomAutonomy.Session
+info: ././././WorkroomAutonomy/Session.lean:206:0: 'WorkroomAutonomy.reserve_preserves' does not depend on any axioms
+info: ././././WorkroomAutonomy/Session.lean:207:0: 'WorkroomAutonomy.step_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:208:0: 'WorkroomAutonomy.continuation_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:209:0: 'WorkroomAutonomy.stale_checkpoint_rejected' does not depend on any axioms
+info: ././././WorkroomAutonomy/Session.lean:210:0: 'WorkroomAutonomy.no_global_fuel_refill' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:211:0: 'WorkroomAutonomy.progress_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:212:0: 'WorkroomAutonomy.trace_preserves' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:213:0: 'WorkroomAutonomy.trace_length_bounded' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Session.lean:214:0: 'WorkroomAutonomy.unknown_never_reissued' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Session.lean:215:0: 'WorkroomAutonomy.takeover_preserves_identity' does not depend on any axioms
+ℹ [7/9] Built WorkroomAutonomy.Witnesses
+info: ././././WorkroomAutonomy/Witnesses.lean:212:0: 'WorkroomAutonomy.Witnesses.continuation_positive' does not depend on any axioms
+info: ././././WorkroomAutonomy/Witnesses.lean:213:0: 'WorkroomAutonomy.Witnesses.refilling_loses_history' does not depend on any axioms
+info: ././././WorkroomAutonomy/Witnesses.lean:214:0: 'WorkroomAutonomy.Witnesses.resetting_unknown_enables_duplicate' does not depend on any axioms
+info: ././././WorkroomAutonomy/Witnesses.lean:215:0: 'WorkroomAutonomy.Witnesses.relevance_only_leaks' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Witnesses.lean:216:0: 'WorkroomAutonomy.Witnesses.pass_label_is_insufficient' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Witnesses.lean:217:0: 'WorkroomAutonomy.Witnesses.graph_optimal' depends on axioms: [propext, Quot.sound]
+info: ././././WorkroomAutonomy/Witnesses.lean:218:0: 'WorkroomAutonomy.Witnesses.unreachable_positive' depends on axioms: [propext]
+info: ././././WorkroomAutonomy/Witnesses.lean:219:0: 'WorkroomAutonomy.Witnesses.development_gain_is_not_true_gain' does not depend on any axioms
+✔ [8/9] Built WorkroomAutonomy
+Build completed successfully.

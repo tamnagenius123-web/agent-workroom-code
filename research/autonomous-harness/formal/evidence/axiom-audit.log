@@ -1,0 +1,62 @@
+'WorkroomAutonomy.allows_composition' depends on axioms: [propext]
+'WorkroomAutonomy.tool_semantic_composition' does not depend on any axioms
+'WorkroomAutonomy.tool_capability_composition' depends on axioms: [propext]
+'WorkroomAutonomy.reserve_preserves' does not depend on any axioms
+'WorkroomAutonomy.step_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.continuation_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.stale_checkpoint_rejected' does not depend on any axioms
+'WorkroomAutonomy.no_global_fuel_refill' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.progress_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.trace_preserves' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.trace_length_bounded' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.unknown_never_reissued' depends on axioms: [propext]
+'WorkroomAutonomy.takeover_preserves_identity' does not depend on any axioms
+'WorkroomAutonomy.retrieval_sound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_never_sealed' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_compatible_tool' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.retrieval_provenance_scope' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.promotion_sound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.mismatched_candidate_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.author_cannot_self_promote' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.potential_bound' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.certified_shortest_path' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.closed_cut_contains_path' does not depend on any axioms
+'WorkroomAutonomy.certified_unreachable' does not depend on any axioms
+'WorkroomAutonomy.cumulative_improvement' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.session_valid' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.continuation_positive' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.continuation_refill_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.stale_continuation_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.canceled_continuation_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.late_continuation_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.reserve_positive' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.reserve_overflow_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.refilling_loses_history' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.unknown_takeover_positive' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.resetting_unknown_enables_duplicate' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.retrieval_positive' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.expired_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.incompatible_tool_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.reviewed_compatible_tool_positive' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.untrusted_source_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.retracted_memory_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.cross_project_memory_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.sealed_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.excessive_capability_rejected' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.relevance_only_leaks' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.composition_positive' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.missing_capability_rejected' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.promotion_positive' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.rejected_wrong_artifact' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.rejected_current_policy_change' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.rejected_self_review' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.rejected_stale_registry_revision' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.rejected_inconclusive' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.pass_label_is_insufficient' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.graph_feasible' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.graph_witness' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.graph_optimal' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.disconnected_closed' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.unreachable_positive' depends on axioms: [propext]
+'WorkroomAutonomy.Witnesses.infeasible_potential_is_not_a_certificate' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.development_gain_is_not_true_gain' does not depend on any axioms

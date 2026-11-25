@@ -1,0 +1,8 @@
+'WorkroomAutonomy.Witnesses.continuation_positive' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.refilling_loses_history' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.resetting_unknown_enables_duplicate' does not depend on any axioms
+'WorkroomAutonomy.Witnesses.relevance_only_leaks' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.pass_label_is_insufficient' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.graph_optimal' depends on axioms: [propext, Quot.sound]
+'WorkroomAutonomy.Witnesses.unreachable_positive' depends on axioms: [propext]
+'WorkroomAutonomy.Witnesses.development_gain_is_not_true_gain' does not depend on any axioms

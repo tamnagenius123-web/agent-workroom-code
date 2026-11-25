@@ -1,0 +1,44 @@
+✔ driver invokes optional harness admission before any model dispatch (9.571366ms)
+✔ actual runDriver pins approved model, bundle and memory before existing dispatch and submission (16.262537ms)
+✔ harness rejects model outside host admission before dispatch (2.126838ms)
+✔ harness rejects bundle outside host admission before dispatch (2.012237ms)
+✔ harness rejects project outside host admission before dispatch (2.050084ms)
+✔ harness rejects family outside host admission before dispatch (1.811127ms)
+✔ harness rejects shared outside host admission before dispatch (2.283253ms)
+✔ harness rejects bytes outside host admission before dispatch (1.804657ms)
+✔ saved run keeps its exact memory and bundle after backpressure; selector is not rerun (18.346301ms)
+✔ changed admission and tampered memory fail closed on a saved pin (1.5654ms)
+✔ binding cannot be applied to a changed task specification or another principal (0.306579ms)
+✔ explicit driver billing project cannot differ from the admitted project (1.561775ms)
+✔ native and harness model contracts must agree (1.193704ms)
+✔ noncooperative harness selection cannot outlive the driver deadline (14.798058ms)
+✔ native contract rejection prevents provider dispatch instead of silently falling back to text-only execution (8.635657ms)
+✔ native USD and total-token bounds reject before the first provider POST (4.548769ms)
+✔ fake-provider driver executes actual local data checks and replays one fenced submission after a lost response (331.939212ms)
+✔ historical native submission replay preserves evidence but stays held after task cancellation (307.703234ms)
+✔ the default plan does not load credentials, mutate a journal, or call a service (0.333008ms)
+✔ bounded driver journals exact material before execution and submits only for independent review (4.004466ms)
+✔ a generationless ambiguous response remains held across restart without another execution POST (2.393908ms)
+✔ explicit zero-effect capacity denial preserves the same request for a later bounded invocation (3.40544ms)
+✔ a prior task effect holds admission with its original recovery identity and no replacement run (2.62939ms)
+✔ known-generation cost recovery uses the same run and the zero-chat reconciliation endpoint (2.670491ms)
+✔ a changed execution generation cannot be adopted by an old host heartbeat (5.822552ms)
+✔ cancelled execution never becomes a review submission (1.567373ms)
+✔ a lost task submission response replays the exact key without executing again (3.504438ms)
+✔ text submission carries the exact execution binding into the server mutation (4.21517ms)
+✔ historical text submission replay does not present a subsequently canceled task as current review work (5.37916ms)
+✔ legacy unbound pending text submission is held without changing or replaying its request (5.387318ms)
+✔ foreign or unavailable pinned revision stops before provider execution (0.819625ms)
+✔ context digest mismatch and mandatory overflow both stop without clipping material (1.573953ms)
+✔ a journal cannot move across identities or silently change an execution envelope (2.681368ms)
+✔ journal persistence failure before provider submission prevents the effect (1.093214ms)
+✔ invalid bounds are rejected before any service call (0.512416ms)
+✔ malformed stored journal data is rejected before claiming or replaying an effect (2.346557ms)
+ℹ tests 36
+ℹ suites 0
+ℹ pass 36
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1464.625607

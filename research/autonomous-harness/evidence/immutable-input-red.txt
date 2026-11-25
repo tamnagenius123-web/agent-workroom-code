@@ -1,0 +1,30 @@
+FF
+======================================================================
+FAIL: test_tool_cannot_change_the_input_seen_by_the_checker (test_session_runtime.SessionTests.test_tool_cannot_change_the_input_seen_by_the_checker)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/workroom-code/research/autonomous-harness/test_session_runtime.py", line 182, in test_tool_cannot_change_the_input_seen_by_the_checker
+    self.assertEqual(out['status'], 'failed')
+AssertionError: 'verified' != 'failed'
+- verified
++ failed
+
+
+======================================================================
+FAIL: test_checker_cannot_change_the_result_that_gets_settled (test_session_runtime.SessionTests.test_checker_cannot_change_the_result_that_gets_settled)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/scratch/d62e0f565d0c/implementation/workroom-code/research/autonomous-harness/test_session_runtime.py", line 190, in test_checker_cannot_change_the_result_that_gets_settled
+    self.assertEqual(out['result'], {'y': 3})
+AssertionError: {'y': 999} != {'y': 3}
+- {'y': 999}
+?       ^^^
+
++ {'y': 3}
+?       ^
+
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.005s
+
+FAILED (failures=2)

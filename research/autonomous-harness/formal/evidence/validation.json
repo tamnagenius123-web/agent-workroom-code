@@ -1,0 +1,344 @@
+{
+  "schema": "workroom-lean-validation-v1",
+  "status": "REFERENCE_CHECKED",
+  "completed_utc": "2026-11-25T10:07:02.200983+00:00",
+  "reference_pr38_head": "14ec58e854b6705498d233e796b4e243605b2dd5",
+  "compiler_version": "Lean (version 4.19.0, x86_64-unknown-linux-gnu, commit 6caaee842e94, Release)",
+  "lean_binary_sha256": "92c3d35b5bfaa5e0fea413a775d504cf46cd95e1345df61c2274f76779e7e023",
+  "official_release_url": "https://github.com/leanprover/lean4/releases/download/v4.19.0/lean-4.19.0-linux.tar.zst",
+  "download_archive_sha256": null,
+  "download_authenticity": "Official HTTPS release origin; no independent signature verification was performed.",
+  "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+  "python_version": "3.12.14",
+  "source_manifest": "evidence/source-manifest.json",
+  "source_manifest_sha256": "9d7f00e3e9ef1da66565b5346fd15210c0eff40a66a8510a81e1a2270233bb96",
+  "source_token_audit_violations": [],
+  "theorem_declarations": 62,
+  "theorem_axiom_audit_complete": true,
+  "axiom_allowlist": [
+    "Quot.sound",
+    "propext"
+  ],
+  "unexpected_axioms": {},
+  "theorem_axiom_dependencies": {
+    "WorkroomAutonomy.allows_composition": [
+      "propext"
+    ],
+    "WorkroomAutonomy.tool_semantic_composition": [],
+    "WorkroomAutonomy.tool_capability_composition": [
+      "propext"
+    ],
+    "WorkroomAutonomy.reserve_preserves": [],
+    "WorkroomAutonomy.step_preserves": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.continuation_preserves": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.stale_checkpoint_rejected": [],
+    "WorkroomAutonomy.no_global_fuel_refill": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.progress_preserves": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.trace_preserves": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.trace_length_bounded": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.unknown_never_reissued": [
+      "propext"
+    ],
+    "WorkroomAutonomy.takeover_preserves_identity": [],
+    "WorkroomAutonomy.retrieval_sound": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.retrieval_never_sealed": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.retrieval_compatible_tool": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.retrieval_provenance_scope": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.promotion_sound": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.mismatched_candidate_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.author_cannot_self_promote": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.potential_bound": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.certified_shortest_path": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.closed_cut_contains_path": [],
+    "WorkroomAutonomy.certified_unreachable": [],
+    "WorkroomAutonomy.cumulative_improvement": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.session_valid": [],
+    "WorkroomAutonomy.Witnesses.continuation_positive": [],
+    "WorkroomAutonomy.Witnesses.continuation_refill_rejected": [],
+    "WorkroomAutonomy.Witnesses.stale_continuation_rejected": [],
+    "WorkroomAutonomy.Witnesses.canceled_continuation_rejected": [],
+    "WorkroomAutonomy.Witnesses.late_continuation_rejected": [],
+    "WorkroomAutonomy.Witnesses.reserve_positive": [],
+    "WorkroomAutonomy.Witnesses.reserve_overflow_rejected": [],
+    "WorkroomAutonomy.Witnesses.refilling_loses_history": [],
+    "WorkroomAutonomy.Witnesses.unknown_takeover_positive": [],
+    "WorkroomAutonomy.Witnesses.resetting_unknown_enables_duplicate": [],
+    "WorkroomAutonomy.Witnesses.retrieval_positive": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.expired_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.incompatible_tool_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.reviewed_compatible_tool_positive": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.untrusted_source_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.retracted_memory_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.cross_project_memory_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.sealed_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.excessive_capability_rejected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.relevance_only_leaks": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.composition_positive": [],
+    "WorkroomAutonomy.Witnesses.missing_capability_rejected": [],
+    "WorkroomAutonomy.Witnesses.promotion_positive": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.rejected_wrong_artifact": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.rejected_current_policy_change": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.rejected_self_review": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.rejected_stale_registry_revision": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.rejected_inconclusive": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.pass_label_is_insufficient": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.graph_feasible": [],
+    "WorkroomAutonomy.Witnesses.graph_witness": [],
+    "WorkroomAutonomy.Witnesses.graph_optimal": [
+      "Quot.sound",
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.disconnected_closed": [],
+    "WorkroomAutonomy.Witnesses.unreachable_positive": [
+      "propext"
+    ],
+    "WorkroomAutonomy.Witnesses.infeasible_potential_is_not_a_certificate": [],
+    "WorkroomAutonomy.Witnesses.development_gain_is_not_true_gain": []
+  },
+  "commands": [
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "--version"
+      ],
+      "started_utc": "2026-11-25T10:06:54.607468+00:00",
+      "exit_code": 0,
+      "log": "evidence/lean-version.log",
+      "log_sha256": "5362a246ce2545424db10a77de8fd4694f4cf8b0170dfd43fa727acf7f7f259b"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "clean"
+      ],
+      "started_utc": "2026-11-25T10:06:54.719079+00:00",
+      "exit_code": 0,
+      "log": "evidence/clean.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "build"
+      ],
+      "started_utc": "2026-11-25T10:06:54.759139+00:00",
+      "exit_code": 0,
+      "log": "evidence/build-final.log",
+      "log_sha256": "74ed1bab743b44f5dc9d8572d62c52093b3eeda96d1300e2dece88e7b1aa2aba"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Tools.lean"
+      ],
+      "started_utc": "2026-11-25T10:06:57.493641+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Tools.log",
+      "log_sha256": "3d393565f8877aea5f44a59e9543cbeb80bb4797b73cb2974a20fb8633c25f23"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Session.lean"
+      ],
+      "started_utc": "2026-11-25T10:06:57.764469+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Session.log",
+      "log_sha256": "c54b3d485581ebc16518138eeba2360003a14157d8f72d4518a0bbfb9695f161"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Memory.lean"
+      ],
+      "started_utc": "2026-11-25T10:06:58.959366+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Memory.log",
+      "log_sha256": "d44a03b998de4af441641cea14ac87a277f4f7d41092485316de0c3b0a250ee4"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Promotion.lean"
+      ],
+      "started_utc": "2026-11-25T10:06:59.555405+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Promotion.log",
+      "log_sha256": "7fd2760860a84dfbb458d14c18608ede474b83f3cabd793fa29cc5c769b0e4e4"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Certificates.lean"
+      ],
+      "started_utc": "2026-11-25T10:07:00.213198+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Certificates.log",
+      "log_sha256": "23f4969a6927c539b26e8c5d62f3ed28961f3c0270d7d07602bdf943a4842dc2"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy/Witnesses.lean"
+      ],
+      "started_utc": "2026-11-25T10:07:00.681117+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-Witnesses.log",
+      "log_sha256": "c864819f4baa07d7895f1743386c31979736ebd1c96be2271462e4744d9c04ad"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "WorkroomAutonomy.lean"
+      ],
+      "started_utc": "2026-11-25T10:07:01.235740+00:00",
+      "exit_code": 0,
+      "log": "evidence/fresh-root.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "/workspace/scratch/d62e0f565d0c/implementation/formal_lane/lean-4.19.0-linux/bin/lake",
+        "env",
+        "lean",
+        "-DwarningAsError=true",
+        "Audit.lean"
+      ],
+      "started_utc": "2026-11-25T10:07:01.605653+00:00",
+      "exit_code": 0,
+      "log": "evidence/axiom-audit.log",
+      "log_sha256": "9832a5d090aff0eebbbf920e7ce35429f1fb22f38e7140ba8c41f61563a78a8b"
+    }
+  ],
+  "claims": {
+    "all_local_sources_elaborated_fresh_process": true,
+    "all_theorems_transitively_axiom_audited": true,
+    "independent_checker": false,
+    "production_runtime_refinement": "OPEN",
+    "python_checker_refinement": "OPEN",
+    "empirical_rsi_gain": "OPEN",
+    "deployment_performed": false
+  }
+}
